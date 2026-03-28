@@ -1,0 +1,48 @@
+{
+  "name": "mybrain",
+  "version": "0.0.0",
+  "private": true,
+  "homepage": "https://github.com/xinyao27/mybrain#readme",
+  "bugs": {
+    "url": "https://github.com/xinyao27/mybrain/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "xinyao",
+    "email": "hi@xinyao.me"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xinyao27/mybrain.git"
+  },
+  "funding": "https://github.com/sponsors/xinyao27",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp pack",
+    "check": "vp check --fix",
+    "lint": "vp lint --fix",
+    "fmt": "vp fmt",
+    "test": "vp test",
+    "up": "taze major -Ir",
+    "prepare": "vp config"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260328.1",
+    "taze": "latest",
+    "typescript": "~5.9.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vite-plus": "latest"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    }
+  }
+}
