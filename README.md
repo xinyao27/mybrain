@@ -1,15 +1,17 @@
 # mybrain
 
-To install dependencies:
+My personal knowledge base — a place to store ideas, tech notes, inspirations, and anything worth remembering.
 
-```bash
-bun install
-```
+## What's inside
 
-To run:
+### skills/
 
-```bash
-bun run index.ts
-```
+AI agent skills I created and use daily. These are practical, battle-tested workflows that help me scaffold projects, set up stacks, and automate repetitive tasks.
 
-This project was created using `bun init` in bun v1.3.11. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+### docs/
+
+Everything else — random ideas, technical research, shower thoughts, drafts, notes. Could be anything. All Markdown.
+
+## License
+
+MIT © [xinyao](https://github.com/xinyao27)
