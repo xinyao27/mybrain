@@ -512,4 +512,356 @@ This raises several UX-level questions:
 
 ---
 
-<!-- PART 1 END - Section 5 onwards will be appended -->
+## 5. Existing Project Reuse Plan
+
+### 5.1 ohbug (SDK monorepo) → Observability Foundation
+
+| Package          | Purpose                                                      | Reuse Method       |
+| ---------------- | ------------------------------------------------------------ | ------------------ |
+| `@ohbug/core`    | Error event management, extension system, reporting pipeline | Direct npm install |
+| `@ohbug/browser` | Browser error capture (includes error-stack-parser)          | Direct npm install |
+| `@ohbug/react`   | React Error Boundary + hooks                                 | Direct npm install |
+| `@ohbug/types`   | Shared type definitions                                      | Direct npm install |
+| `@ohbug/utils`   | Utility functions                                            | Direct npm install |
+
+**Needs to be added:**
+
+- `@ohbug/webview` — WebView bridge error capture plugin (Swift↔WebView communication errors, bridge timeouts)
+- rrweb integration package (extracted from ohbug-dashboard)
+
+### 5.2 ohbug-dashboard → Observability Panel Components
+
+| Module                               | Content                         | Reuse Method                                  |
+| ------------------------------------ | ------------------------------- | --------------------------------------------- |
+| `components/issue-list.tsx`          | Issue list                      | Migrate to new React SPA                      |
+| `components/issue-detail-tabs.tsx`   | Issue detail tabs               | Migrate to new React SPA                      |
+| `components/issue-related-rrweb.tsx` | Session Replay player           | Migrate to new React SPA                      |
+| `components/event-detail-stack.tsx`  | Error Stack display             | Migrate to new React SPA                      |
+| `components/stack-info.tsx`          | Stack info parsing              | Migrate to new React SPA                      |
+| `components/charts/*`                | Error trend charts, perf charts | Migrate to new React SPA                      |
+| `components/alert-list.tsx`          | Alert management                | Migrate to new React SPA                      |
+| `components/data-table/`             | Data table component            | Migrate to new React SPA                      |
+| `services/*`                         | API request layer               | Rewrite, connect to Santi backend             |
+| `packages/server/`                   | NestJS backend                  | Gradually replace with Santi endpoint or oRPC |
+
+**Migration path:**
+
+```
+现在：  Next.js SSR + NestJS + Prisma/PostgreSQL
+  ↓
+目标：  Vite+ React SPA（嵌入 Paperboy）+ Santi backend
+```
+
+The ongoing migration work on the current `feature/shadcn` branch continues, but the goal shifts from "standalone application" to "embeddable component package."
+
+### 5.3 kly + ohbug — Two Sides of One System
+
+> kly and ohbug are complementary. The file-level index that kly organizes can be combined with error stacks.
+
+kly is the **static perspective** (code structure, dependency relationships, file metadata); ohbug is the **runtime perspective** (error scenes, user behavior, sessions). The Error Stack is their **intersection point** — a filename + line number that connects both worlds.
+
+#### Why They Must Be One System
+
+**Error Stack without kly (traditional mode):**
+
+```
+TypeError: Cannot read property 'content' of undefined
+    at renderMessage (MessageList.tsx:142)
+    at Array.map (<anonymous>)
+    at ChatPanel (ChatPanel.tsx:87)
+```
+
+→ You only know line 142 blew up. Then you manually dig through code and manually assess the blast radius.
+
+**Error Stack with kly + ohbug combined (target mode):**
+
+```
+TypeError: Cannot read property 'content' of undefined
+    at renderMessage (MessageList.tsx:142)
+
+    ┌─ kly: MessageList.tsx
+    │  描述: Chat 消息列表渲染组件，处理 streaming/markdown/attachment
+    │  symbols: renderMessage(), useScrollPosition(), MessageBubble
+    │  imports from: ChatStore, MessageTypes, MarkdownRenderer
+    │  imported by: ChatPanel, WorkspaceChat, DetachedChatWindow (5个消费者)
+    │
+    │  风险传播路径: ChatPanel.tsx → WorkspaceRoot.tsx → App.tsx
+    │  近30天此文件错误: 3次 (高频模块)
+    │  最近修改: commit abc1234 by @yanan-li (3天前, PR #236)
+    └─
+```
+
+→ You know not only **where it blew up**, but also **why it might have blown up** (who changed it recently), **how big the impact is** (5 consumers will be affected), and **how to fix it** (look at the imports to see where the data comes from).
+
+#### How They Combine
+
+| kly Provides                                     | ohbug Provides             | Combined Capability                                                                                                             |
+| ------------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| File description + symbols                       | Error Stack line number    | Semantic explanation of the error location (not just a line number — it's "the render function of the message list")            |
+| dependency graph                                 | Error file                 | Risk propagation path (which other modules will this error affect)                                                              |
+| git history per file                             | error event timeline       | Causal correlation ("this file was changed 3 days ago → errors started since then")                                             |
+| LLM-generated file metadata                      | error context              | Auto-generated human-readable error reports (not a stack trace for engineers — a "what happened" for everyone)                  |
+| File modification frequency + dependency fan-out | Historical error frequency | **Defect prediction heatmap**: high modification frequency × high dependency fan-out × historically high error rate = risk zone |
+
+#### Data Flow
+
+```
+                    ┌─────────────────────────┐
+                    │    Paperboy WebView      │
+                    │                          │
+                    │  @ohbug/browser          │
+                    │  捕获 error + stack      │
+                    └──────────┬───────────────┘
+                               │ 上报 event
+                               ▼
+                    ┌──────────────────────────┐
+                    │      Santi Backend       │
+                    │                          │
+                    │  1. source map 反解      │
+                    │     → 源码文件名 + 行号   │
+                    │                          │
+                    │  2. 查询 kly index        │
+                    │     → 文件描述            │
+                    │     → symbols             │
+                    │     → dependency graph    │
+                    │     → git blame/history   │
+                    │                          │
+                    │  3. 生成 enriched report  │
+                    │     → 语义化错误描述       │
+                    │     → 风险传播路径         │
+                    │     → 因果关联（最近改动）  │
+                    │     → 修复建议            │
+                    └──────────┬───────────────┘
+                               │
+                    ┌──────────┴───────────────┐
+                    │  Observability 面板       │
+                    │  ┌─────────────────────┐  │
+                    │  │ Enriched Error View │  │
+                    │  │ + 风险热力图         │  │
+                    │  │ + 每日健康报告       │  │
+                    │  └─────────────────────┘  │
+                    └──────────────────────────┘
+```
+
+#### kly Capability Details
+
+| Capability                  | Purpose                                                       | Integration Method          |
+| --------------------------- | ------------------------------------------------------------- | --------------------------- |
+| tree-sitter AST parsing     | Precisely understand file structure (imports/exports/symbols) | kly MCP server              |
+| dependency graph            | Risk propagation prediction, PR impact analysis               | kly MCP `graph` command     |
+| FTS5 search + LLM rerank    | MiniChen searches the codebase during PR review               | kly MCP `query` command     |
+| git-aware incremental build | Automatically update index on every commit                    | `kly hook install`          |
+| LLM file metadata           | Semantic descriptions for enriched error reports              | kly MCP `show` command      |
+| MCP server                  | Unified access point for all agents                           | `kly mcp` (stdio transport) |
+
+---
+
+## 6. Migration Strategy — Full Rebuild, Not Incremental Migration
+
+### 6.1 The Underlying Logic of the Migration
+
+**Current state:** Swift frontend ↔ Santi (Three-Body, protobuf communication) → SwiftUI rendering
+**Target state:** React frontend ↔ Santi (direct JSON/WebSocket) → WebView rendering
+
+**This is not a "migration" — it's rebuilding the frontend with a new tech stack. Santi stays unchanged; only its consumer is being swapped.**
+
+Core decisions:
+
+- **Everything visible in the entire application is a WebView** — Sidebar, Chat, Workspace, Settings are all written in React. There will be no hybrid state of "SwiftUI Sidebar + React Chat."
+- **Completely delete the existing SwiftUI frontend** — No maintaining two codebases, no serving two frontends.
+- **Protobuf is no longer needed** — Santi directly sends final data to the React WebView via JSON/WebSocket. The communication protocol is drastically simplified.
+- **Swift retains only system-native logic** — Permission handling, window management, OS data collection, launching the Santi subprocess.
+
+**Key architectural decision: The frontend + Santi are packaged as a single TypeScript executable, launched by Swift as a subprocess.**
+
+This means:
+
+- Very little Swift-side code (window management + permissions + OS collection + process management)
+- Swift is no longer a black box — all business logic is in TypeScript, directly observable via ohbug
+- Santi is no longer a standalone daemon — it's part of the app, its lifecycle is tied to the app
+- No "transitional state" — there is no phase where two UIs coexist
+
+### 6.2 Engineering Structure
+
+```
+paperboy/
+├── native/                ← Swift 壳（极薄，可能不到 1000 行）
+│   ├── App.swift
+│   ├── WindowManager.swift
+│   ├── OSCollector.swift       ← OS 数据采集（屏幕/AX/按键）
+│   └── ProcessManager.swift    ← 启动/管理 Santi 子进程
+│
+├── packages/
+│   ├── web/               ← React SPA（新前端）
+│   │   ├── src/
+│   │   ├── vite.config.ts
+│   │   └── package.json
+│   │
+│   ├── santi/             ← Santi（TypeScript）
+│   │   ├── src/
+│   │   │   ├── server.ts       ← HTTP + WebSocket server
+│   │   │   ├── api/            ← API 路由
+│   │   │   └── static.ts       ← 生产环境 serve React SPA
+│   │   └── (现有 Santi 代码)
+│   │
+│   └── shared/            ← 前后端共享类型
+│       ├── api-types.ts
+│       └── events.ts
+│
+└── package.json           ← monorepo root (pnpm workspace)
+```
+
+### 6.3 SPA Loading Method
+
+**Development environment:** Vite dev server (:5173) + HMR, API requests proxied to Santi (:3000)
+**Production environment:** Santi simultaneously serves static files + API + WebSocket, all on the same localhost port
+
+```
+┌───────────────────────────────────────────────────┐
+│                Santi (localhost:PORT)               │
+│                                                    │
+│  GET /*           → serve React SPA 静态文件        │
+│  GET /api/*       → API 路由                       │
+│  WS  /ws          → WebSocket (streaming, 实时推送) │
+└───────────────────────────────────────────────────┘
+```
+
+Reasons for choosing localhost over file://:
+
+- Santi is already an HTTP server; adding static serving is nearly zero-cost
+- Frontend + API same-origin → zero CORS issues
+- WebSocket same-origin → no additional configuration needed
+- Some Web APIs behave inconsistently under file:// (Service Worker, etc.)
+
+**Swift startup flow:**
+
+1. `ProcessManager.swift` → launch `bun dist/server/index.js` (Santi subprocess)
+2. Wait for health check `GET /api/health` to return 200
+3. Create `NSWindow` + `WKWebView` → load `http://localhost:PORT`
+
+**Build artifacts:**
+
+```
+dist/
+├── web/           ← React SPA 构建产物 (vp build)
+│   ├── index.html
+│   └── assets/
+└── server/        ← Santi bundle (bun build)
+    └── index.js
+```
+
+### 6.4 Rebuild Phases
+
+#### Phase 0: Prior Validation ✅
+
+- Inkwell panel: React 19 + Vite + Zustand + Tailwind running stably inside WKWebView
+- PostBox SDK: Swift ↔ WebView bridge communication verified
+- Artifacts panel, file previewer already running on the WebView architecture
+
+#### Phase 1: Infrastructure Setup
+
+- Set up monorepo structure (native/ + packages/web + packages/santi + packages/shared)
+- Add HTTP static serving + WebSocket endpoint to Santi
+- Switch Santi communication protocol from protobuf to JSON/WebSocket
+- Implement the ultra-thin Swift shell: `ProcessManager` (launch Santi subprocess) + `WindowManager` (WKWebView windows)
+- Verify the full chain: Swift launch → Santi serve → WebView load → React → API communication
+
+#### Phase 2: Core UI Rebuild
+
+**Rebuild all visual modules in parallel** (there is no question of "which to migrate first" — rebuild everything, ship together):
+
+- **Chat UI**: Message list + input box + message queue + streaming + markdown/code blocks + attachment preview
+- **Sidebar**: Session list, Spaces, search
+- **Workspace**: Merge Inkwell, artifacts panel, file previewer, diff viewer
+- **Settings**: Configuration pages
+
+Note: React streaming chat has been validated by the entire industry (ChatGPT/Claude/Cursor/v0). Sidebar + Settings are pure CRUD UI — far simpler to implement in React than SwiftUI.
+
+#### Phase 3: The Switch
+
+- New React frontend passes the acceptance checklist
+- **One-shot switch**: Delete all SwiftUI View code, Swift networking layer, protobuf definitions
+- Swift retains only: window management + permissions + OS collection + subprocess management
+- @ohbug/browser + @ohbug/react integration
+- kly MCP integration
+
+#### Phase 4: Observability Goes Live
+
+- ohbug-dashboard components migrated in
+- Error Stack → commit/line + kly enrichment pipeline connected end-to-end
+- OS data + ohbug data converge in the cloud
+- Unified entry point (Slack + Linear + GitHub + Paperboy bot → Observability platform)
+- Daily product health report auto-generation
+
+**Bug handling strategy:** During the rebuild, the existing SwiftUI version continues to serve users. Severe bugs (P0/P1) are fixed in the old code; less severe ones are deferred — these bugs will most likely not exist in the new WebView version.
+
+---
+
+## 7. Risks & Mitigations
+
+### 7.1 Risks During the Rebuild
+
+> Note: Since we are adopting a full rebuild strategy (not incremental migration), the "two UIs coexisting" and "Santi dual API" problems do not exist.
+
+| Risk                                          | Severity  | Details                                                                                                                           | Mitigation                                                                                                                               |
+| --------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ~~Two UIs coexisting interop~~                | ~~N/A~~   | ~~Does not exist. The entire frontend is rebuilt with WebView at once; there will be no SwiftUI + React hybrid state.~~           | —                                                                                                                                        |
+| ~~Santi dual API burden~~                     | ~~N/A~~   | ~~Does not exist. After completely deleting the SwiftUI frontend, Santi serves only React; protobuf is no longer needed either.~~ | —                                                                                                                                        |
+| Bug handling judgment for old version         | 🟡 Medium | During the rebuild, the old SwiftUI version continues to serve users. Fix severe bugs or not?                                     | P0/P1 fixed in old code. P2+ deferred — these bugs will most likely not exist in the new WebView version.                                |
+| Feature Parity acceptance criteria            | 🟡 Medium | When is the React version considered "ready to ship"?                                                                             | Write a clear acceptance checklist in Phase 3; switch only when the entire checklist passes.                                             |
+| Unable to iterate new features during rebuild | 🟡 Medium | A full rebuild means the team's energy is focused on the rebuild; new features are paused.                                        | Keep the rebuild cycle to 4–6 weeks. Only fix P0/P1 during this period. After the rebuild, new features are developed directly in React. |
+
+### 7.2 Risks After Migration Completion
+
+| Risk                                           | Severity  | Details                                                                                                                                                                                                          | Mitigation                                                                                                                                                                                         |
+| ---------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WKWebView content process killed by the system | 🔴 High   | Under macOS memory pressure, jetsam may kill the WKWebView content process → entire UI goes white. Electron wouldn't (Chromium has independent processes), but WKWebView is subject to system memory management. | Implement `webViewWebContentProcessDidTerminate` → auto reload. React uses Zustand persist to save critical state. User experiences only a brief flicker, no data loss.                            |
+| localhost security exposure                    | 🔴 High   | Santi listens on localhost:PORT — any application on the machine can connect to this port, potentially reading user data or injecting messages.                                                                  | ① Random port at launch ② Swift generates a one-time token, WebView carries it with requests ③ Santi validates the token ④ Consider Unix socket instead of TCP (only the local process can access) |
+| Longer startup time                            | 🔴 High   | Currently Swift renders in under a second. After rewrite: Swift → spawn Bun → Santi ready → health check → WebView load → React hydrate → API → render. Could be 2–4 seconds of blank window.                    | ① Swift shows a native splash/loading animation first ② Santi pre-launch (launchd login item) ③ React uses skeleton screen to show a scaffold first                                                |
+| Santi process crash → entire UI down           | 🔴 High   | If Santi crashes → localhost unreachable → WebView goes white. Currently SwiftUI runs in the same process; "backend down" doesn't exist.                                                                         | Swift monitors the Santi process (process monitoring) → auto-restart on crash → WebView shows fallback → ohbug records the crash                                                                   |
+| App size bloat                                 | 🟡 Medium | Currently ~30–50MB. Adding Bun runtime (~50–90MB) + Santi bundle + React SPA could reach ~100–150MB.                                                                                                             | Bun runtime is the bulk; watch for Bun team's binary size optimizations. Or consider requiring users to pre-install Bun.                                                                           |
+| WebKit version not controllable                | 🟡 Medium | WKWebView uses the system WebKit. macOS 13's WebKit ≠ macOS 15's. CSS/JS behavior may differ.                                                                                                                    | Determine minimum macOS version → corresponding WebKit version. Run multi-version tests in CI. Use feature detection.                                                                              |
+| Native feel degradation                        | 🟡 Medium | Scrollbars/text selection/context menus/drag & drop/IME/spell check/accent color — each individually non-fatal, but accumulated, the user feels "something's off."                                               | Build a comparison checklist item by item. Prioritize high-frequency interactions (scrolling, selection, shortcuts). Minor differences on low-frequency interactions are acceptable.               |
+| Multi-process resource consumption             | 🟡 Medium | Swift + Bun/Santi + WKWebView content process + WKWebView networking process = 4–6 processes. Laptop users care about battery.                                                                                   | Monitor CPU/memory baseline. Ensure low power consumption at idle. Consider Santi throttling when inactive.                                                                                        |
+| Code signing / Notarization                    | 🟡 Medium | Bundling the Bun binary into the .app bundle — Apple notarization may flag it as an unknown binary.                                                                                                              | Run the full notarization flow early. Confirm the Bun binary can be codesigned + notarized.                                                                                                        |
+| Chat streaming performance                     | 🟢 Low    | Every agent product in the React ecosystem implements streaming chat with TS+React; the ecosystem is extremely mature. The current SwiftUI implementation is actually the disadvantage.                          | —                                                                                                                                                                                                  |
+| Bridge performance bottleneck                  | 🟢 Low    | Under the cloud architecture, the bridge only handles system-level operations — it doesn't transfer data.                                                                                                        | —                                                                                                                                                                                                  |
+
+---
+
+## 8. Timeline (Aligned with 6/1 Target)
+
+| Timeframe   | Milestone                                                  |
+| ----------- | ---------------------------------------------------------- |
+| 3/28 – 4/4  | Phase 1: Chat WebView prototype + benchmark                |
+| 4/5 – 4/18  | Phase 2: Chat full migration                               |
+| 4/19 – 4/30 | Phase 3: Sidebar + Settings + Observability first version  |
+| 5/1 – 5/15  | Phase 4: Shell minimization + ohbug full integration       |
+| 5/16 – 6/1  | Phase 5: Full observability + unified entry point + polish |
+
+---
+
+## 9. Appendix
+
+### A. Related Project Repositories
+
+- `~/work/paperboy` — Paperboy macOS app (Swift/SwiftUI + Santi daemon)
+- `~/work/ohbug` — Error tracking SDK monorepo (already migrated to Vite+)
+- `~/work/ohbug-dashboard` — Error tracking dashboard (`feature/shadcn` branch migration in progress)
+- `~/work/kly` — Codebase file-level indexing tool (already on Vite+)
+
+### B. Existing WebView Architecture References
+
+- `packages/inkwell/` — Validated React + WKWebView architecture
+- PostBox SDK — Swift↔WebView bridge communication protocol
+- Liquid Glass framework design (2026-03-27) — A more general Swift + WebView + Bun architecture concept
+
+### C. Design Decision Records
+
+| Decision           | Choice           | Alternatives            | Rationale                                                        |
+| ------------------ | ---------------- | ----------------------- | ---------------------------------------------------------------- |
+| UI Framework       | React            | SwiftUI / Flutter / Vue | Team expertise + best ecosystem + cross-platform ability         |
+| Build Tool         | Vite+ (bun)      | Webpack / Turbopack     | Speed + unified toolchain                                        |
+| Observability      | ohbug (in-house) | Sentry / Datadog        | Full control + existing code + zero cost                         |
+| Code Indexing      | kly (in-house)   | CodeQL / Sourcegraph    | Lightweight + MCP-native + tree-sitter already integrated        |
+| Migration Strategy | Incremental      | Full rewrite            | Controllable risk + each step reversible + product doesn't stall |
