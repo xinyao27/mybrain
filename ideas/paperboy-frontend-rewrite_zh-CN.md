@@ -50,7 +50,7 @@ Paperboy 当前的前端是纯 SwiftUI 实现，刚刚完成了从 AppKit 到 Sw
 
 ### 4. UX
 
-（待展开）
+（详见第四节 4.4）
 
 ---
 
@@ -231,11 +231,48 @@ Bridge 只处理**系统级操作**，所有**数据密集型通信**走云端 A
 
 **技术栈确认：**
 
-- React 19 + TypeScript
-- Vite+（bun + viteplus）
-- Tailwind CSS v4 + shadcn/ui（xinyao preset）
-- Zustand（状态管理）
-- TanStack Query（数据请求）
+| 层面                | 选择                                         | 备注                                           |
+| ------------------- | -------------------------------------------- | ---------------------------------------------- |
+| 框架                | React 19 + TypeScript                        |                                                |
+| 构建                | Vite+（bun + viteplus）                      |                                                |
+| CSS                 | Tailwind CSS v4 + shadcn/ui（xinyao preset） | Inkwell 已在用                                 |
+| 状态管理            | Zustand                                      | Inkwell 已在用                                 |
+| 数据请求            | TanStack Query                               |                                                |
+| 路由                | TanStack Router                              |                                                |
+| WebSocket           | 待定                                         | 原生 WebSocket API / Vercel AI SDK / socket.io |
+| Markdown 渲染       | streamdown                                   | 已在 Paperboy node_modules 中                  |
+| 代码块高亮          | Shiki                                        | Same 使用 shiki@3.4.2                          |
+| 富文本输入框        | 参考 Manus Textarea 实现                     | `~/work/manus/.../components/Textarea.tsx`     |
+| 虚拟列表            | virtua                                       | Manus 使用 virtua@0.40.0，轻量                 |
+| 动画                | framer-motion                                |                                                |
+| 图标                | Phosphor Icons                               | https://phosphoricons.com/                     |
+| Toast               | shadcn (Inkwell 已有)                        |                                                |
+| 右键菜单 / Dropdown | shadcn (Inkwell 已有)                        |                                                |
+| 表单验证            | zod + react-hook-form                        | Settings 页面用                                |
+| 拖拽                | 暂不需要                                     |                                                |
+| 国际化              | 不需要                                       |                                                |
+
+**各模块参考来源：**
+
+| 模块            | 参考项目 | 参考路径                                                                                | 复用方式                 |
+| --------------- | -------- | --------------------------------------------------------------------------------------- | ------------------------ |
+| 消息列表        | Same     | `~/work/feat_ai-sdk-v5/same-next/src/components/chat/messages/` (8个文件)               | 参考实现                 |
+| 消息列表        | Manus    | `~/work/manus/manus-next-agent-webapp/.../ChatBox/ChatMessages/`                        | 参考实现                 |
+| TextArea 输入框 | Manus    | `~/work/manus/manus-next-agent-webapp/.../components/Textarea.tsx` (153行)              | 学习实现                 |
+| TextArea 输入框 | Same     | `~/work/feat_ai-sdk-v5/same-next/.../chat/textarea/` (3576行，含 attach/context/upload) | 参考实现                 |
+| 代码块          | Same     | `~/work/feat_ai-sdk-v5/same-next/src/components/ui/code-block.tsx` + Shiki              | 参考实现                 |
+| Tool Call UI    | Same     | `~/work/feat_ai-sdk-v5/same-next/.../chat/tool-invocation/` (31个文件)                  | 参考实现                 |
+| Tool Call UI    | 1Code    | `https://github.com/21st-dev/1Code`                                                     | 参考实现                 |
+| Message Queue   | Same     | Same chat 模块中的 queue 相关逻辑                                                       | 直接参考                 |
+| 附件预览        | Same     | `~/work/feat_ai-sdk-v5/same-next/.../chat/textarea/attach/`                             | **只参考样式，代码重写** |
+| WebSocket 通信  | Manus    | `~/work/manus/manus-next-agent-webapp/.../controllers/useChatWebsocketController.tsx`   | 参考实现                 |
+| Sidebar         | 待定     | Same `history.tsx` / `chats.tsx` 或 Manus sessions controller                           | 待决定                   |
+
+**参考项目路径汇总：**
+
+- Same: `~/work/feat_ai-sdk-v5/same-next/`
+- Manus: `~/work/manus/manus-next-agent-webapp/`
+- 1Code: `https://github.com/21st-dev/1Code`
 
 **对团队的意义：** 所有人都能改核心 UI 了。不再受限于 SwiftUI 的学习曲线和人员稀缺。
 
