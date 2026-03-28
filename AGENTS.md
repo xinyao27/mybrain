@@ -20,7 +20,8 @@ Possible content types include:
 
 ## Writing Conventions
 
-- Primary language is **Chinese**; English is used for technical terms
+- All documentation defaults to **English**. For each document, also provide a **Chinese (Simplified) translation** with the same filename plus a `_zh-CN` suffix. For example: `my-new-idea.md` (English) and `my-new-idea_zh-CN.md` (Chinese).
+- When creating or updating a document, always maintain both versions in sync.
 - Markdown files use `.md` extension
 - Filenames use lowercase kebab-case, e.g. `my-new-idea.md`
 - Each file should start with a heading (`# Title`) and a date when possible
@@ -29,21 +30,25 @@ Possible content types include:
 ## Agent Guidelines
 
 ### Creating Content
+
 - Place files in the appropriate directory by type. When unsure, use the root or `ideas/`
 - Add a title and creation date at the top of new files
 - Preserve the author's personal voice and tone — avoid over-formatting or sounding too "AI-generated"
 - Prefer capturing more rather than less — ideas are fleeting
 
 ### Organizing Content
+
 - **Never delete any content**, even if it looks like a rough draft or incomplete
 - When reorganizing, keep the original text intact; add structured summaries alongside if needed
 - If moving files, explain why
 
 ### Searching
+
 - Use `rg` (ripgrep) to search across Markdown files
 - Content is mixed Chinese and English — search with both when relevant
 
 ### Technical Context
+
 - The author is a frontend / full-stack developer
 - Tech stack preferences: TypeScript, React, Bun, Vite, pnpm
 - The repo uses vite-plus for build tooling, but the core value is the Markdown content, not the code
