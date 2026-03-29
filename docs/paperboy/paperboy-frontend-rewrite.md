@@ -12,6 +12,9 @@
 > - [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — Swift → Santi → WebView → React → oRPC pipeline validation
 > - [Phase 2: Core UI Rebuild & Migration](./phase2-core-ui-rebuild.md) — plan plus SwiftUI→React checklist (English)
 > - [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal, Protobuf cleanup, ohbug+kly integration
+> - [Guarded Vibe Coding Framework](./guarded-vibe-coding-framework.md) — Workflow framework for maintaining high quality during AI vibe coding
+> - [Code Traceability & Fast Fix Pipeline](./code-traceability-and-fast-fix.md) — End-to-end traceability + automated fix pipeline from error to resolution
+> - [Message List Architecture: Pretext + Custom Virtualization](./message-list-pretext-architecture.md) — Technology selection for message list using Pretext instead of virtua
 
 This is the master plan for the Paperboy frontend grand rewrite — replacing the existing SwiftUI-based UI with a React SPA embedded in a thin native shell via WKWebView. It explains the motivation (team skill-stack mismatch, cross-platform needs, observability gaps), lays out the four design pillars (React everywhere, observability + reliability, speed, UX), defines the target architecture, details the technology stack, and provides a phased delivery roadmap from end-to-end verification through production switchover.
 
