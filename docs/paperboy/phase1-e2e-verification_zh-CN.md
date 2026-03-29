@@ -54,14 +54,48 @@
 - `/api/*` → 新 oRPC OpenAPI HTTP（Swift 用）
 - `/health` → 保持现有健康检查不变
 
-### Step 2：packages/web 脚手架 + 调通 oRPC
+### Step 2：packages/shared + packages/web 脚手架 + 调通 oRPC
 
-**目标：** 创建 React SPA 项目，oRPC WebSocket client 连上 Santi，调通 `system.health`。
+**目标：** 创建共享类型包和 React SPA 项目，oRPC WebSocket client 连上 Santi，调通 `system.health`。
+
+**Step 2a：packages/shared — 共享类型与契约**
+
+`packages/shared` 存放 `packages/web` 和 `packages/santi` 之间共享的类型和常量。避免循环依赖，提供通信契约的单一事实来源。
+
+**交付物：**
+
+- `packages/shared/` — 纯 TypeScript，无运行时依赖
+- `packages/shared/src/router.ts` — 重导出 `Router` 类型
+- `packages/shared/src/errors.ts` — 错误码（见通信协议 §3.5）
+- `packages/shared/src/postbox.ts` — PostBox 消息与事件类型定义（`PostBoxAction`、`NativeEvent`）
+- `packages/shared/src/types/` — 共享业务类型（Session、Project、Message 等）
+- `packages/web/src/lib/postbox/` — `PlatformAdapter` 接口、`WKWebViewAdapter`、adapter 自动检测
+- `packages/web/src/lib/channels/native.ts` — 类型化的 native channel，包装 PostBox adapter
+- `packages/web/src/lib/pb.ts` — 统一的 `pb.*` 入口（oRPC + native channel）
+
+```json
+// packages/shared/package.json
+{
+  "name": "@paperboy/shared",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "zod": "latest"
+  }
+}
+```
+
+`packages/web` 和 `packages/santi` 都在 dependencies 中加入 `"@paperboy/shared": "workspace:*"`。
+
+**Step 2b：packages/web — React SPA**
 
 **交付物：**
 
 - `packages/web/` — React 19 + Vite+ + Tailwind v4 + shadcn + Zustand
-- oRPC WebSocket client 配置
+- oRPC WebSocket client 配置（使用 `partysocket` 自动重连）
 - 一个最小页面：显示 "Connected to Santi" + health check 结果
 
 **技术栈（已确认）：**
@@ -75,20 +109,28 @@
 | 路由        | TanStack Router                       |
 | 数据请求    | TanStack Query + @orpc/tanstack-query |
 | oRPC Client | @orpc/client/websocket (RPCLink)      |
+| WS 重连     | partysocket                           |
 
 **oRPC Client 配置：**
 
 ```typescript
+import PartySocket from "partysocket";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/websocket";
-import type { Router } from "../../santi/src/rpc/router";
+import type { Router } from "@paperboy/shared/router";
 
-const ws = new WebSocket("ws://localhost:PORT/rpc");
+const ws = new PartySocket({
+  host: `localhost:${PORT}`,
+  path: "/rpc",
+  minReconnectDelay: 500,
+  maxReconnectDelay: 5000,
+  reconnectDecay: 1.5,
+});
 const link = new RPCLink({ websocket: ws });
 const client = createORPCClient<Router>(link);
 ```
 
-**类型共享：** `packages/web` 直接 import `Router` type from `packages/santi`（pnpm workspace 引用）。
+**类型共享：** `packages/web` 从 `@paperboy/shared` 导入类型（pnpm workspace 引用）。`Router` 类型从 shared 重导出，web 不直接依赖 santi。
 
 **开发环境：**
 
@@ -96,6 +138,19 @@ const client = createORPCClient<Router>(link);
 - 在 Chrome 里开发（有 DevTools + HMR）
 - WebSocket 连 Santi (`:7654/rpc`)
 - 不在 WKWebView 里做日常开发
+- Vite proxy 配置将 `/rpc` 和 `/api` 转发到 Santi，开发环境下无 CORS 问题：
+
+```typescript
+// packages/web/vite.config.ts
+export default defineConfig({
+  server: {
+    proxy: {
+      "/rpc": { target: "ws://localhost:7654", ws: true },
+      "/api": { target: "http://localhost:7654" },
+    },
+  },
+});
+```
 
 ### Step 3：验证 Streaming
 
@@ -142,8 +197,17 @@ const chatStreamDemo = os
 - 新的极简 Swift target 或现有工程瘦身
 - `WindowManager` — 创建 NSWindow + WKWebView
 - `ProcessManager` — 启动 Santi 子进程（复用现有 DaemonManager 逻辑）
+- `PostBoxHandler` — 实现 `WKScriptMessageHandlerWithReply`，用于 React ↔ Swift 双向通信（完整设计见通信协议 §2.2）
 - WKWebView 加载 `http://localhost:PORT`
 - Swift 通过 URLSession 调 `/api/system.health`
+
+**PostBox 集成要点：**
+
+- `PostBoxHandler` 使用 `WKScriptMessageHandlerWithReply` 长轮询模式 — 不用 `callAsyncJavaScript`，不注入全局 JS 函数
+- React → Swift：`postMessage({ type: "action", ... })` → Swift reply handler 回复
+- Swift → React：`postMessage({ type: "listen" })` 挂起直到 Swift 调用 `emit()`，然后重新注册
+- Phase 1 只需实现 `window.close` 和 `ping` action 验证管线
+- 完整 action 集（`window.create`、`notification.send`、`clipboard.read` 等）在 Phase 2 逐步添加
 
 **决策：瘦身 vs 新建？**
 
@@ -160,6 +224,19 @@ const chatStreamDemo = os
 - 多窗口共享同一个 `WKWebsiteDataStore`
 - token 注入通过 `WKUserScript` 在页面加载前注入
 
+**WKWebView 调试：**
+
+- 启用 Safari Web Inspector：设置 `webView.isInspectable = true`（需要 macOS 13.3+ / iOS 16.4+，仅 debug 构建）
+- Safari 中：开发菜单 → 选择 Mac → 选择 WKWebView 目标
+- 完整访问 Elements、Console、Network、Sources 面板 — 和调试普通网页一样
+- 生产构建中 `isInspectable` 应设为 `false`（或用 `#if DEBUG` 守护）
+
+```swift
+#if DEBUG
+webView.isInspectable = true
+#endif
+```
+
 ### Step 5：端到端验证
 
 **目标：** 完整启动链路跑通。
@@ -174,6 +251,8 @@ const chatStreamDemo = os
 - [ ] oRPC WebSocket 连接建立
 - [ ] `system.health` 调用成功，结果显示在页面
 - [ ] streaming demo 跑通，events 实时渲染
+- [ ] PostBox action：React 调 `pb.window.ping()` → Swift 回复成功
+- [ ] PostBox event：Swift 调 `postBoxHandler.emit("ping")` → React 接收并显示
 - [ ] Swift 通过 `/api/agent.status` 拿到数据（模拟 Orb）
 - [ ] 关闭 app → Santi 进程正常退出
 
@@ -192,15 +271,16 @@ const chatStreamDemo = os
 
 Phase 4 清理时只需删掉 `/ws` 路径。
 
-### 3.2 开发体验 / HMR（Step 2-3）
+### 3.2 开发体验 / HMR / CORS（Step 2-3）
 
-**风险：** WKWebView 里没有 HMR，开发效率低。
+**风险：** WKWebView 里没有 HMR，开发效率低。Vite dev server (`:5173`) 连接 Santi (`:7654`) 存在跨域问题。
 
 **对策：** 开发时在 Chrome 跑，WKWebView 只用于验证。
 
 - Vite dev server (`:5173`) 提供 HMR
-- WebSocket 连 Santi (`:7654/rpc`)
-- 需要确认 oRPC WS 允许跨域连接
+- Vite proxy 配置将 `/rpc`（WS）和 `/api`（HTTP）转发到 Santi (`:7654`)，开发环境下消除 CORS 问题
+- WKWebView 内运行时同源（都来自 Santi 端口），无 CORS 问题
+- Santi 的 OpenAPIHandler 也配有 `CORSPlugin` 作为安全网
 
 ### 3.3 类型共享（Step 2）
 
@@ -244,14 +324,15 @@ Phase 4 清理时只需删掉 `/ws` 路径。
 
 ## 四、时间估算
 
-| Step     | 内容                           | 估算       |
-| -------- | ------------------------------ | ---------- |
-| 1        | Santi oRPC 挂载                | 1-2 天     |
-| 2        | React SPA 脚手架 + 调通 health | 1 天       |
-| 3        | Streaming 验证                 | 1 天       |
-| 4        | Swift Shell + WKWebView        | 2-3 天     |
-| 5        | 端到端联调                     | 1-2 天     |
-| **总计** |                                | **6-9 天** |
+| Step     | 内容                                                    | 估算       |
+| -------- | ------------------------------------------------------- | ---------- |
+| 1        | Santi oRPC 挂载                                         | 1-2 天     |
+| 2a       | packages/shared 脚手架（类型、错误码、PostBox 类型）    | 0.5 天     |
+| 2b       | packages/web 脚手架 + 调通 health                       | 1 天       |
+| 3        | Streaming 验证                                          | 1 天       |
+| 4        | Swift Shell + WKWebView + PostBox 长轮询 handler + 调试 | 2-3 天     |
+| 5        | 端到端联调                                              | 1-2 天     |
+| **总计** |                                                         | **6-9 天** |
 
 ---
 

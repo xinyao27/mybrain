@@ -54,14 +54,48 @@ No real UI will be built (no Chat, no Sidebar, no Settings). Only a minimal veri
 - `/api/*` → New oRPC OpenAPI HTTP (for Swift)
 - `/health` → Existing health check remains unchanged
 
-### Step 2: packages/web Scaffolding + oRPC Integration
+### Step 2: packages/shared + packages/web Scaffolding + oRPC Integration
 
-**Objective:** Create a React SPA project, connect to Santi via oRPC WebSocket client, and validate `system.health`.
+**Objective:** Create the shared type package and React SPA project, connect to Santi via oRPC WebSocket client, and validate `system.health`.
+
+**Step 2a: packages/shared — Shared Types and Contracts**
+
+`packages/shared` holds types and constants shared between `packages/web` and `packages/santi`. This avoids circular dependencies and provides a single source of truth for the communication contract.
+
+**Deliverables:**
+
+- `packages/shared/` — pure TypeScript, no runtime dependencies
+- `packages/shared/src/router.ts` — re-exports the `Router` type
+- `packages/shared/src/errors.ts` — error codes (see Communication Protocol §3.5)
+- `packages/shared/src/postbox.ts` — PostBox message & event type definitions (`PostBoxAction`, `NativeEvent`)
+- `packages/shared/src/types/` — shared business types (Session, Project, Message, etc.)
+- `packages/web/src/lib/postbox/` — `PlatformAdapter` interface, `WKWebViewAdapter`, adapter auto-detection
+- `packages/web/src/lib/channels/native.ts` — typed native channel wrapping PostBox adapter
+- `packages/web/src/lib/pb.ts` — unified `pb.*` entry point (oRPC + native channel)
+
+```json
+// packages/shared/package.json
+{
+  "name": "@paperboy/shared",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "zod": "latest"
+  }
+}
+```
+
+Both `packages/web` and `packages/santi` add `"@paperboy/shared": "workspace:*"` to their dependencies.
+
+**Step 2b: packages/web — React SPA**
 
 **Deliverables:**
 
 - `packages/web/` — React 19 + Vite+ + Tailwind v4 + shadcn + Zustand
-- oRPC WebSocket client configuration
+- oRPC WebSocket client configuration (with `partysocket` for auto-reconnect)
 - A minimal page displaying "Connected to Santi" + health check result
 
 **Tech Stack (confirmed):**
@@ -75,20 +109,28 @@ No real UI will be built (no Chat, no Sidebar, no Settings). Only a minimal veri
 | Routing       | TanStack Router                       |
 | Data Fetching | TanStack Query + @orpc/tanstack-query |
 | oRPC Client   | @orpc/client/websocket (RPCLink)      |
+| WS Reconnect  | partysocket                           |
 
 **oRPC Client Configuration:**
 
 ```typescript
+import PartySocket from "partysocket";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/websocket";
-import type { Router } from "../../santi/src/rpc/router";
+import type { Router } from "@paperboy/shared/router";
 
-const ws = new WebSocket("ws://localhost:PORT/rpc");
+const ws = new PartySocket({
+  host: `localhost:${PORT}`,
+  path: "/rpc",
+  minReconnectDelay: 500,
+  maxReconnectDelay: 5000,
+  reconnectDecay: 1.5,
+});
 const link = new RPCLink({ websocket: ws });
 const client = createORPCClient<Router>(link);
 ```
 
-**Type Sharing:** `packages/web` directly imports the `Router` type from `packages/santi` (pnpm workspace reference).
+**Type Sharing:** `packages/web` imports types from `@paperboy/shared` (pnpm workspace reference). The `Router` type is re-exported from shared so web doesn't directly depend on santi.
 
 **Development Environment:**
 
@@ -96,6 +138,19 @@ const client = createORPCClient<Router>(link);
 - Develop in Chrome (DevTools + HMR available)
 - WebSocket connects to Santi (`:7654/rpc`)
 - Day-to-day development does NOT happen inside WKWebView
+- Vite proxy config forwards `/rpc` and `/api` to Santi to avoid CORS issues during development:
+
+```typescript
+// packages/web/vite.config.ts
+export default defineConfig({
+  server: {
+    proxy: {
+      "/rpc": { target: "ws://localhost:7654", ws: true },
+      "/api": { target: "http://localhost:7654" },
+    },
+  },
+});
+```
 
 ### Step 3: Streaming Verification
 
@@ -142,8 +197,17 @@ const chatStreamDemo = os
 - A new minimal Swift target or a slimmed-down version of the existing project
 - `WindowManager` — creates NSWindow + WKWebView
 - `ProcessManager` — launches Santi child process (reuses existing DaemonManager logic)
+- `PostBoxHandler` — implements `WKScriptMessageHandlerWithReply` for bidirectional React ↔ Swift communication (see Communication Protocol §2.2 for full design)
 - WKWebView loads `http://localhost:PORT`
 - Swift calls `/api/system.health` via URLSession
+
+**PostBox integration notes:**
+
+- `PostBoxHandler` uses the `WKScriptMessageHandlerWithReply` long-poll pattern — no `callAsyncJavaScript`, no global JS function injection
+- React → Swift: `postMessage({ type: "action", ... })` → Swift reply handler responds
+- Swift → React: `postMessage({ type: "listen" })` hangs until Swift calls `emit()`, then re-registers
+- For Phase 1, only `window.close` and a `ping` action are needed to verify the pipeline
+- Full action set (`window.create`, `notification.send`, `clipboard.read`, etc.) will be added incrementally in Phase 2
 
 **Decision: Slim down vs. New target?**
 
@@ -160,6 +224,19 @@ const chatStreamDemo = os
 - Multiple windows share the same `WKWebsiteDataStore`
 - Token injection via `WKUserScript` before page load
 
+**WKWebView debugging:**
+
+- Enable Safari Web Inspector for WKWebView: set `webView.isInspectable = true` (requires macOS 13.3+ / iOS 16.4+, debug builds only)
+- In Safari: Develop menu → select the Mac → select the WKWebView target
+- Full access to Elements, Console, Network, Sources panels — same as debugging a regular web page
+- For production builds, `isInspectable` should be `false` (or guarded behind `#if DEBUG`)
+
+```swift
+#if DEBUG
+webView.isInspectable = true
+#endif
+```
+
 ### Step 5: End-to-End Verification
 
 **Objective:** Full startup pipeline runs successfully.
@@ -174,6 +251,8 @@ const chatStreamDemo = os
 - [ ] oRPC WebSocket connection is established
 - [ ] `system.health` call succeeds; result is displayed on page
 - [ ] Streaming demo runs; events render in real time
+- [ ] PostBox action: React calls `pb.window.ping()` → Swift replies successfully
+- [ ] PostBox event: Swift calls `postBoxHandler.emit("ping")` → React receives and displays
 - [ ] Swift fetches data via `/api/agent.status` (simulating Orb)
 - [ ] App close → Santi process exits cleanly
 
@@ -192,15 +271,16 @@ const chatStreamDemo = os
 
 During Phase 4 cleanup, simply remove the `/ws` path.
 
-### 3.2 Developer Experience / HMR (Steps 2–3)
+### 3.2 Developer Experience / HMR / CORS (Steps 2–3)
 
-**Risk:** No HMR inside WKWebView, leading to low development efficiency.
+**Risk:** No HMR inside WKWebView, leading to low development efficiency. Cross-origin issues when Vite dev server (`:5173`) connects to Santi (`:7654`).
 
 **Mitigation:** Develop in Chrome; use WKWebView only for verification.
 
 - Vite dev server (`:5173`) provides HMR
-- WebSocket connects to Santi (`:7654/rpc`)
-- Need to confirm oRPC WS allows cross-origin connections
+- Vite proxy config forwards `/rpc` (WS) and `/api` (HTTP) to Santi (`:7654`), eliminating CORS issues during development
+- When running inside WKWebView, same-origin (both served from Santi's port), so no CORS issues
+- Santi's OpenAPIHandler also has `CORSPlugin` as a safety net
 
 ### 3.3 Type Sharing (Step 2)
 
@@ -244,14 +324,15 @@ Then `import type { Router } from '@paperboy/santi/rpc/router'`.
 
 ## 4. Time Estimates
 
-| Step      | Description                                      | Estimate     |
-| --------- | ------------------------------------------------ | ------------ |
-| 1         | Santi oRPC mounting                              | 1–2 days     |
-| 2         | React SPA scaffolding + health check integration | 1 day        |
-| 3         | Streaming verification                           | 1 day        |
-| 4         | Swift Shell + WKWebView                          | 2–3 days     |
-| 5         | End-to-end integration testing                   | 1–2 days     |
-| **Total** |                                                  | **6–9 days** |
+| Step      | Description                                                     | Estimate     |
+| --------- | --------------------------------------------------------------- | ------------ |
+| 1         | Santi oRPC mounting                                             | 1–2 days     |
+| 2a        | packages/shared scaffolding (types, error codes, PostBox types) | 0.5 day      |
+| 2b        | packages/web scaffolding + health check integration             | 1 day        |
+| 3         | Streaming verification                                          | 1 day        |
+| 4         | Swift Shell + WKWebView + PostBox long-poll handler + debugging | 2–3 days     |
+| 5         | End-to-end integration testing                                  | 1–2 days     |
+| **Total** |                                                                 | **6–9 days** |
 
 ---
 
