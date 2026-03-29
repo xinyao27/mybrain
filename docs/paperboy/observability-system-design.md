@@ -1,7 +1,7 @@
 # Building the Paperboy Observability System
 
 > Created: 2026-03-28
-> Updated: 2026-03-29
+> Updated: 2026-03-30 (added executable phased roadmap §11.7)
 > Author: Xinyao Chen
 > Status: Draft
 > Related document: [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite.md) — Section 4.2 "Observability + Reliability"
@@ -35,7 +35,7 @@ When an error occurs, these three data streams converge in the cloud, producing 
 │  └────────────────────────────┘  │        │  └──────────────┬───────────────┘  │
 │                                  │        │                 │                   │
 │  ┌────────────────────────────┐  │        │  ┌──────────────▼───────────────┐  │
-│  │ WebView (React SPA)         │  │  API   │  │  Santi Backend               │  │
+│  │ WebView (React SPA)         │  │  API   │  │  paperboy-platform           │  │
 │  │                             │←─┼───────→│  │  ┌─────────────────────────┐ │  │
 │  │ @ohbug/browser captures     │  │        │  │  │ KlyService              │ │  │
 │  │ errors → reports to cloud   │──┼───────→│  │  │ enrichErrorStack()      │ │  │
@@ -476,7 +476,9 @@ kly graph --focus <path>  # dependency graph for a file
 
 ## 6. Santi Integration — The Orchestration Layer
 
-Santi is the backend that connects all three data sources. It imports kly as a library, receives ohbug events via its API, and correlates OS context by timestamp.
+**Naming note:** This section describes the **cloud orchestration role** (kly, ohbug-shaped events, OS context). The concrete deployment target is **paperboy-platform** (see **Section 11**). The **macOS Santi daemon** owns the WebSocket bridge and OS capture—same product name, different layer: the client streams data up; the cloud aggregates and enriches.
+
+The orchestration layer imports kly as a library when the runtime allows, ingests browser and server error events via API, and correlates OS context using timestamps and session keys.
 
 ### 6.1 KlyService
 
@@ -560,14 +562,14 @@ Rationale for direct import:
                │ (stack trace + source-mapped file names/line numbers)
                ▼
 ┌──────────────────────────────────────────────────┐
-│ Santi / Cloud API                                 │
+│ paperboy-platform (cloud API)                     │
 │                                                   │
 │  1. Receive ohbug error event                     │
 │                                                   │
-│  2. Source map resolution                         │
-│     → source-map-trace resolves to source lines   │
+│  2. Source map resolution (e.g. source-map lib)   │
+│     → resolves to source lines                    │
 │                                                   │
-│  3. KlyService.enrichError(stack)                 │
+│  3. enrichErrorStack() / KlyService equivalent    │
 │     ├── db.getFile()         → file desc/symbols  │
 │     ├── getDependents()      → reverse deps       │
 │     ├── buildDependencyGraph() → risk propagation │
@@ -581,7 +583,7 @@ Rationale for direct import:
 │     └── Clipboard content                         │
 │                                                   │
 │  5. Generate Enriched Error Report                │
-│     → Store in ohbug database                     │
+│     → Store in platform PostgreSQL (optional ohbug)│
 │     → Push to Observability panel                 │
 │     → Auto-generate Markdown document             │
 │     → Optional: auto-create Linear issue          │
@@ -684,6 +686,8 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 
 ## 10. Action Plan
 
+> **For execution order, follow [§11.7 Executable rollout roadmap](#117-executable-rollout-roadmap-phased)** first. This section groups work by **tool/module**; §11.7 orders by **phase and acceptance criteria**—use both together.
+
 ### Step 1: kly Core Modifications
 
 > **Status: Most items completed in kly v0.2** (commit `b819ff2`, 2026-03-28).
@@ -707,16 +711,18 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 | 4   | Add web-vitals extension                                 | 🟡 Med   | Small  |
 | 5   | Configure unplugin for auto source map upload            | 🟡 Med   | Small  |
 
-### Step 3: Santi Integration
+### Step 3: Cloud orchestration (paperboy-platform)
 
-| #   | Task                                                | Priority | Effort |
-| --- | --------------------------------------------------- | -------- | ------ |
-| 1   | Santi `pnpm add kly`                                | 🔴 High  | —      |
-| 2   | Implement `KlyService` wrapper                      | 🔴 High  | Medium |
-| 3   | ohbug event → `KlyService.enrichError()` call chain | 🔴 High  | Medium |
-| 4   | Enriched Error Report → storage + push to frontend  | 🔴 High  | Medium |
-| 5   | Merge OS context data (screenshots + action trail)  | 🟡 Med   | Medium |
-| 6   | Migrate ohbug ingestion into Santi API              | 🟡 Med   | Large  |
+> Cloud ingestion, storage, and enrichment are anchored in **paperboy-platform**; the macOS **Santi daemon** handles the bridge and OS capture. See **Section 11**.
+
+| #   | Task                                                    | Priority | Effort |
+| --- | ------------------------------------------------------- | -------- | ------ |
+| 1   | paperboy-platform add `kly` (optional dependency)       | 🔴 High  | —      |
+| 2   | Implement `KlyService` or equivalent wrapper            | 🔴 High  | Medium |
+| 3   | ohbug-shaped event → `enrichErrorStack()` pipeline      | 🔴 High  | Medium |
+| 4   | Enriched Error Report → storage + push to frontend      | 🔴 High  | Medium |
+| 5   | Merge OS context (screenshots + action trail)           | 🟡 Med   | Medium |
+| 6   | Move ohbug-like ingestion + issue model to platform API | 🟡 Med   | Large  |
 
 ### Step 4: CI Integration
 
@@ -740,7 +746,227 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 
 ---
 
-## 11. Appendix
+## 11. paperboy-platform Integration
+
+**Execution order:** Follow **[§11.7 Executable rollout roadmap](#117-executable-rollout-roadmap-phased)** first; §11.1–§11.6 explain what/why.
+
+The cloud-side **event hub** for this observability stack is **paperboy-platform** (`~/work/paperboy-platform`): a Bun + Hono service that already exposes REST, WebSockets (Santi bridge, visitor chat), `storeError()` → `platform_errors`, OTEL ingest, Prometheus/Loki, and the **web-chat-react** SPA. The design above referred to a generic “Santi backend” on the cloud; concretely, **ingestion, storage, correlation, and APIs are intended to live in paperboy-platform**.
+
+Design and environment contracts are above; **§11.7** is an **ordered execution roadmap** (deliverables + acceptance criteria). Code-level truth lives in each repository.
+
+### 11.1 Architecture alignment
+
+| Concern                                                             | Where it runs                                                                                                                                           |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ohbug-style event POST, issue storage, source maps, kly index files | **paperboy-platform** (planned under `/api/v1/observability/*`)                                                                                         |
+| kly index **build** (tree-sitter + LLM)                             | **Developer machine / CI**; SQLite artifact uploaded to the platform (or object storage + reload)                                                       |
+| kly **enrichment** at processing time                               | **paperboy-platform** when a kly index is available; if `kly` is not integrated in the runtime, skip enrichment (runtime payloads should still persist) |
+| OS context (screenshots, keys, clipboard, window switch)            | **macOS Santi daemon** → **existing** WebSocket `/api/v1/web-chat/bridge/connect` with `os:*` message types → persisted as queryable OS rows            |
+| Server-side proxy/billing errors                                    | **Target: unified** with client errors: `storeError()` and WebView errors share one issue model                                                         |
+| Real-time panel updates                                             | **WebSocket** (planned: `/api/v1/observability/ws`, admin-authenticated subscribers)                                                                    |
+
+### 11.2 Updated cloud diagram (conceptual)
+
+```
+macOS Client                          paperboy-platform (cloud)
+────────────────                      ───────────────────────────
+WebView (React)                       POST …/observability/events (ohbug-shaped body)
+  @ohbug/browser or equivalent    ──►  + PostgreSQL (events, issues, OS rows, …)
+  Observability panel WS         ◄──  WS …/observability/ws
+
+Santi daemon (Swift)                  WS /api/v1/web-chat/bridge/connect
+  OS capture layer               ──►  os:screenshot | os:keystroke | ...
+
+CI / dev machine                      Upload kly index + source maps (internal auth)
+  kly build --incremental          ──►  Used for stack resolution + enrichment
+```
+
+### 11.3 Hybrid kly model
+
+- **Build** kly indexes locally or in CI; **upload** the SQLite (and optional metadata) to the platform.
+- The platform **does not** run `kly build` on the hot path; when `KLY_REPO_ROOT` and an index are available, it **may** call `enrichErrorStack()` for static enrichment.
+
+### 11.4 Unified pipeline + two-phase UX (fastest awareness)
+
+- **Client** errors (WebView) and **server** errors (`storeError`) **target** a single issue/event model.
+- **Fast path**: accept event → parse stack → fingerprint → persist → **WebSocket push** a “raw” payload quickly (stack may still be minified / not kly-enriched).
+- **Slow path** (async): source-map resolution, optional kly enrichment, OS correlation in a time window → **second push** with enriched fields. The panel should render the raw error first, then patch static/OS context in place so operators **see where it broke first**, then gain full depth.
+
+### 11.5 Environment variables (paperboy-platform)
+
+| Variable                           | Purpose                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------- |
+| `OBSERVABILITY_INGEST_API_KEY`     | API key sent by browser SDK in event body (ohbug-compatible `apiKey` field)       |
+| `KLY_INDEX_PATH` / `KLY_REPO_ROOT` | Optional paths for kly enrichment                                                 |
+| `INTERNAL_SERVICE_KEY`             | Already used for internal uploads (`kly` index, etc.) via `Authorization: Bearer` |
+
+### 11.6 One incident: runtime + static + OS together
+
+**Goal:** When viewing an issue, answer three things at once—what happened at **runtime**, what the **code and dependency history** say, and what the **OS** was doing—without relying on the user to narrate steps.
+
+**Three layers and sources**
+
+| Layer                   | Typical content                                                                    | Primary source                                                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Runtime**             | Type, message, stack, source-mapped locations, (optional) network/breadcrumbs      | WebView: ohbug or equivalent SDK; server: `storeError` on proxies/realtime paths into the same pipeline                   |
+| **Static code context** | File description, symbols, reverse deps, risk paths, recent commits                | **kly**; index built in CI/dev and uploaded for enrichment                                                                |
+| **OS-level context**    | Screenshots, keystrokes, clipboard, window switches, (optional) accessibility tree | **macOS Santi** via the **existing** WebSocket bridge; correlate to errors with **timestamp + sessionId** (or equivalent) |
+
+**Relationship to what paperboy-platform already has (documentation alignment)**
+
+- **Already:** `platform_errors` + `storeError`, OTEL ingest (Opik / Prometheus / Loki), `/internal/metrics`, web-chat-react, Santi/visitor WebSockets.
+- **Contract:** The **issue-level narrative** (Enriched Error Report) targets a unified event model; **OTEL / Loki** keep traces and log search. Whether storage automatically links traces/logs to an issue is an implementation decision; at minimum, correlate manually via `requestId`, `userId`, and time range.
+
+**“Fastest observation of where it broke” — product and protocol notes**
+
+1. **Runtime first:** stack + (when available) source-mapped line is mandatory on first paint.
+2. **Static second:** kly enrichment arrives asynchronously on the same issue to show blast radius and recent changes.
+3. **OS third:** a timeline in the same time window shows cross-app context (clipboard, focus, clicks).
+4. **Correlation keys:** prefer a shared **sessionId** across WebView, Santi, and optional server headers; default OS–error linking uses a **±N second** sliding window (pick N in implementation; start around 5s).
+
+### 11.7 Executable rollout roadmap (phased)
+
+This is a **dependency-ordered checklist**: finish each phase’s **acceptance criteria** before starting the next, so you never build a panel with no data or wire OS events with nothing to correlate.
+
+#### 11.7.1 Dependency order (read first)
+
+```mermaid
+flowchart LR
+  P0[Phase0_contracts_env]
+  P1[Phase1_ingest_DB]
+  P2[Phase2_dual_runtime]
+  P3[Phase3_static_enrich]
+  P4[Phase4_OS_correlate]
+  P5[Phase5_panel_alerts]
+  P0 --> P1 --> P2 --> P3
+  P2 --> P4
+  P3 --> P5
+  P4 --> P5
+```
+
+- **Phase 1** produces writable/queryable events and issues—everything else depends on it.
+- **Phase 2** unifies **WebView** and **`storeError`** into the same model (required for “one incident, full picture”).
+- **Phase 3** and **Phase 4** can overlap somewhat, but **OS correlation** needs **timed events** from Phase 2.
+- **Phase 5** needs at least **GET list/detail** (a minimal read API from Phase 1 can stand in until the full UI exists).
+
+#### 11.7.2 Phase summary
+
+| Phase       | One-line goal                                                              | Primary repo                             | Rough effort (1 engineer) |
+| ----------- | -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------- |
+| **Phase 0** | Freeze payload, env, paths                                                 | Docs + `.env.example` in repos           | 0.5–1 day                 |
+| **Phase 1** | Ingest, DB, fingerprint → issue, HTTP read API                             | `paperboy-platform`                      | 3–5 days                  |
+| **Phase 2** | Browser reporting + `storeError` same pipeline; optional admin WS raw push | `paperboy-platform` + `web-chat-react`   | 2–4 days                  |
+| **Phase 3** | Source map upload + resolve; kly index upload + async `enrichErrorStack`   | `paperboy-platform` + CI + `kly`         | 3–6 days                  |
+| **Phase 4** | Santi bridge `os:*` persistence; correlate to events by time + session     | `paperboy` (Swift) + `paperboy-platform` | 3–7 days                  |
+| **Phase 5** | Observability UI (list/detail/timeline); alerts later                      | WebView app + `paperboy-platform`        | 5–10+ days                |
+
+---
+
+#### Phase 0 — Contracts and environment
+
+| Step | Action                                                                                                                                                       | Deliverable                      | Acceptance                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- | -------------------------------------------------------- |
+| 0.1  | Document env vars: `OBSERVABILITY_INGEST_API_KEY`, `INTERNAL_SERVICE_KEY`, `KLY_REPO_ROOT`, `KLY_INDEX_PATH` (optional), `OBSERVABILITY_DATA_DIR` (optional) | Table in README or ops doc       | New teammate can configure local/Staging from docs alone |
+| 0.2  | Freeze **minimal ohbug-compatible** JSON (must carry extractable **message**, **stack**, **type**, **appVersion**, optional **sessionId**)                   | Doc snippet or JSON Schema draft | FE/BE agree on v1 payload                                |
+| 0.3  | Freeze **fingerprint** rule (e.g. `hash(type + normalizedMessage + topFrameFile:line)`)                                                                      | One rule + example               | Same logical error maps to one issue                     |
+| 0.4  | Freeze **`os:*` message** shape (`type`, `timestamp`, optional `sessionId`, payload fields)                                                                  | Protocol table                   | Swift + Hono implement independently                     |
+
+**Done when:** 0.1–0.4 are reviewed and checked into repo (or Appendix D below).
+
+---
+
+#### Phase 1 — paperboy-platform: minimal ingest + DB + read API (MVP)
+
+| Step | Action                                                                                                                | Deliverable       | Acceptance                                  |
+| ---- | --------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
+| 1.1  | Add `observability_issues`, `observability_events` + migration                                                        | Drizzle + SQL     | `migrate` succeeds on empty DB              |
+| 1.2  | `POST /api/v1/observability/events`: validate `apiKey`; parse stack; fingerprint; **upsert issue** + **insert event** | Route + service   | `curl` fake error → 1 issue + 1 event in DB |
+| 1.3  | `GET /api/v1/observability/issues` (admin auth): pagination, sort by `lastSeen`                                       | Route             | Returns the issue from 1.2                  |
+| 1.4  | `GET /api/v1/observability/issues/:id` with last N events                                                             | Route             | IDs match list                              |
+| 1.5  | (Optional) async no-op enrichment hook (`enriched_stack` null)                                                        | queue / microtask | Ingest returns fast                         |
+| 1.6  | Structured logs on ingest failure (never log apiKey)                                                                  | logger            | Greppable                                   |
+
+**Done when:** You can **ingest → query via HTTP** with no frontend.
+
+---
+
+#### Phase 2 — Dual runtime: web-chat + `storeError`
+
+| Step | Action                                                                                                 | Deliverable           | Acceptance                                  |
+| ---- | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------- |
+| 2.1  | `web-chat-react`: init ohbug (or thin `fetch` SDK), `endpoint` → Staging `POST …/observability/events` | module + env          | Deliberate `throw` → DB row `source=client` |
+| 2.2  | Root **ErrorBoundary** (ohbug or custom)                                                               | `app.tsx`             | Render error also creates an event          |
+| 2.3  | After `platform_errors` insert, call same internal **ingest** (`source=server`, no browser apiKey)     | `errors.ts` + service | Forced proxy failure → `source=server`      |
+| 2.4  | Pass `requestId` / `sessionId` into `metadata` JSON when available                                     | fields                | Visible in detail API                       |
+| 2.5  | (Optional) `WS /api/v1/observability/ws`: admin subscribes; **raw** push on ingest                     | WS                    | ws client receives JSON                     |
+
+**Done when:** **Client** and **server** errors both appear in the unified issue list with distinct `source`.
+
+---
+
+#### Phase 3 — Static context: source maps + kly
+
+| Step | Action                                                                                      | Deliverable       | Acceptance                                 |
+| ---- | ------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------ |
+| 3.1  | `POST …/observability/sourcemaps/upload` (apiKey or internal): store `.map` by `appVersion` | route + storage   | File visible on disk/S3                    |
+| 3.2  | Vite `@ohbug/unplugin` or CI step: upload maps per release                                  | config / workflow | Version matches `appVersion` on events     |
+| 3.3  | Async branch: resolve stack; update event row                                               | resolver          | Detail shows original source paths         |
+| 3.4  | `POST …/observability/kly-index/upload` (internal): save SQLite; reload path                | route + config    | Process reads index after deploy           |
+| 3.5  | Async `kly.enrichErrorStack` (best-effort); JSON → `enriched_stack` / issue `enriched_data` | wrapper           | Detail returns kly block when index exists |
+| 3.6  | GitHub Action: `kly build --incremental` + upload index                                     | workflow          | New index after main push                  |
+
+**Done when:** One issue shows **resolved stack** + **kly enrichment** when index is present.
+
+---
+
+#### Phase 4 — OS context: Santi bridge + correlation
+
+| Step | Action                                                                                                 | Deliverable                      | Acceptance                     |
+| ---- | ------------------------------------------------------------------------------------------------------ | -------------------------------- | ------------------------------ |
+| 4.1  | Table `observability_os_context` (add in Phase 1 if you prefer)                                        | migration                        | Rows insertable                |
+| 4.2  | In `handleSantiMessage`, persist messages whose `type` starts with `os:`                               | `web-chat-realtime.ts` + service | Fake bridge message → DB row   |
+| 4.3  | Swift OS layer sends JSON per contract (MVP: `os:window_switch` + `os:clipboard`)                      | `paperboy`                       | Device emits events            |
+| 4.4  | On new event, select OS rows with same `sessionId` and `timestamp ∈ [t−5s, t+5s]`; store JSON on event | correlate fn                     | Detail API returns OS timeline |
+| 4.5  | Redaction policy for clipboard/screenshots                                                             | doc / config                     | Product/security sign-off      |
+
+**Done when:** A **client error** shows **OS events within ±5s** (at least text events).
+
+---
+
+#### Phase 5 — Panel and operations
+
+| Step | Action                                                            | Deliverable      | Acceptance                |
+| ---- | ----------------------------------------------------------------- | ---------------- | ------------------------- |
+| 5.1  | Admin page: issue list (source, count, last seen)                 | UI               | Non-dev can open and read |
+| 5.2  | Issue detail: raw vs enriched stack blocks; read-only kly summary | UI               | Matches API fields        |
+| 5.3  | OS timeline + screenshot placeholder / signed URL                 | UI               | Phase 4 data visible      |
+| 5.4  | (Optional) Embed ohbug-dashboard components or iframe             | integration note | Less duplicate UI         |
+| 5.5  | Alerts: one rule (e.g. new fingerprint → webhook)                 | worker + config  | Verified on Staging       |
+| 5.6  | OTEL/Loki: doc how to jump from logs to issue (manual ok)         | runbook          | On-call knows the path    |
+
+**Done when:** **One incident** shows **runtime + static (if any) + OS (if any)** in one place, with **two-phase** refresh perceptible (raw first, enriched second).
+
+---
+
+#### 11.7.3 Suggested weekly focus (adjust to headcount)
+
+| Week | Focus                                 | Outcome                                  |
+| ---- | ------------------------------------- | ---------------------------------------- |
+| W1   | Phase 0 + Phase 1                     | Staging: curl ingest + list issues       |
+| W2   | Phase 2                               | Real web error + `storeError` dual-write |
+| W3   | Phase 3 (first half)                  | Map upload + resolve                     |
+| W4   | Phase 3 (second half) + Phase 4 start | kly enrich + bridge `os` MVP             |
+| W5+  | Finish Phase 4 + Phase 5              | End-to-end demo                          |
+
+---
+
+#### 11.7.4 Scope cuts (order)
+
+Under pressure: cut **Phase 5 alerts/heatmap** first → then **Phase 3 kly** (keep source maps) → then **Phase 4 screenshots** (keep window/clipboard text). **Do not cut Phase 1+2** or you lose the unified incident view.
+
+---
+
+## 12. Appendix
 
 ### A. Project Paths
 
@@ -748,6 +974,7 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 - **ohbug-dashboard**: `~/work/ohbug-dashboard` (pnpm monorepo, `feature/shadcn` branch)
 - **kly**: `~/work/kly` (TypeScript, Vite+, tree-sitter + LLM)
 - **Paperboy**: `~/work/paperboy` (Swift/SwiftUI + Santi daemon)
+- **paperboy-platform**: `~/work/paperboy-platform` (Bun + Hono cloud; aligned with Section 11 observability hub)
 
 ### B. Relationship with Frontend Rewrite Document
 
@@ -758,22 +985,55 @@ This document is the detailed technical design for Section 4.2 "Observability + 
 ```
 ohbug SDK (@ohbug/browser, @ohbug/react, extensions)
   ├── Runs in React WebView, captures errors
-  ├── Reports to Santi / Cloud API
+  ├── Reports to paperboy-platform (planned observability ingest)
   └── Source maps uploaded via @ohbug/unplugin or @ohbug/cli
 
 ohbug-dashboard (components)
   ├── Issue list, detail, charts → extracted into Observability panel
-  └── Ingestion pipeline → migrated into Santi
+  └── Ingestion pipeline → may merge with or complement platform API
 
 kly (library + CLI)
-  ├── Imported by Santi (direct library function calls)
+  ├── Imported by paperboy-platform when enrichment is enabled
   ├── Called by Claude Code / Codex / MiniChen via CLI (JSON output)
   └── Called by CI via CLI
 
-Santi (backend, orchestration)
-  ├── import kly → enrichErrorStack()
-  ├── Receives ohbug error events
-  ├── Merges OS context data (screenshots, actions, clipboard)
-  ├── Runs ohbug ingestion pipeline (from ohbug-dashboard server)
-  └── Outputs Enriched Error Report → Observability panel
+paperboy-platform (cloud backend)
+  ├── Optional import kly → enrichErrorStack() when index is present
+  ├── Receives ohbug-compatible error events (POST /api/v1/observability/events)
+  ├── Receives server errors via storeError() → same pipeline
+  ├── Merges OS context (Santi bridge WebSocket os:* messages + DB)
+  ├── Stores releases / source maps / kly index artifacts
+  └── WebSocket push → Observability panel; optional forward to ohbug-dashboard later
+```
+
+### D. Minimal ingest JSON examples (Phase 0/1 contract)
+
+Illustrative only—align field names with ohbug or your internal SDK. **Phase 1** must at least extract **message + stack + type + appVersion**.
+
+```json
+{
+  "apiKey": "<OBSERVABILITY_INGEST_API_KEY>",
+  "category": "error",
+  "type": "UNCAUGHT_ERROR",
+  "timestamp": "2026-03-30T12:00:00.000Z",
+  "appVersion": "1.0.0",
+  "sessionId": "sess_xxx",
+  "message": "TypeError: Cannot read properties of undefined (reading 'x')",
+  "detail": {
+    "stack": "TypeError: ...\n    at foo (https://example.com/assets/index-abc.js:1:234)"
+  },
+  "device": { "platform": "MacIntel", "userAgent": "..." }
+}
+```
+
+**Minimal Santi bridge OS message:**
+
+```json
+{
+  "type": "os:window_switch",
+  "timestamp": 1711800000123,
+  "sessionId": "sess_xxx",
+  "fromApp": "Google Chrome",
+  "toApp": "Paperboy"
+}
 ```
