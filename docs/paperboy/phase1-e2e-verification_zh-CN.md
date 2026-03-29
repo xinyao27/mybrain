@@ -7,7 +7,7 @@
 >
 > - [Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)
 > - [通信协议重设计](./communication-protocol_zh-CN.md)
-> - [kly 接入方案](./kly-integration-plan_zh-CN.md)
+> - [可观测性系统设计](./observability-system-design_zh-CN.md)
 
 ## 一、目标
 

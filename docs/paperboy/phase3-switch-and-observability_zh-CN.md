@@ -8,7 +8,7 @@
 >
 > - [Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)
 > - [通信协议重设计](./communication-protocol_zh-CN.md)
-> - [kly 接入方案](./kly-integration-plan_zh-CN.md)
+> - [可观测性系统设计](./observability-system-design_zh-CN.md)
 
 ## 一、目标
 
@@ -57,7 +57,7 @@ Phase 2 建好了 React UI。Phase 3 做三件事：
 - kly MCP 工具扩展（`get_dependents`、`get_file_history`、`enrich_error_stack`）
 - Santi import kly 库函数（`KlyService`）
 - Error stack + OS 上下文在云端汇聚
-- 详见 [kly 接入方案](./kly-integration-plan_zh-CN.md)
+- 详见 [可观测性系统设计](./observability-system-design_zh-CN.md)
 
 > **注：ohbug 和 kly 的具体改造由 Xinyao 直接负责，此处只记录接入点，不展开实现细节。**
 

@@ -7,7 +7,7 @@
 > **相关文档：**
 >
 > - [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — 用 oRPC 替换 Protobuf/PostBox 的详细设计
-> - [kly 集成方案](./kly-integration-plan_zh-CN.md) — kly 如何接入 Paperboy 可观测性系统
+> - [可观测性系统设计](./observability-system-design_zh-CN.md) — 搭建 Paperboy 可观测性系统（ohbug + kly + OS 上下文）
 > - [Phase 1：端到端验证](./phase1-e2e-verification_zh-CN.md) — Swift → Santi → WebView → React → oRPC 全链路验证
 > - [Phase 2：核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) — Chat、Sidebar、Settings、Workspace 重建细节
 > - [Phase 3：切换 + 清理 + 可观测性](./phase3-switch-and-observability_zh-CN.md) — SwiftUI 删除、Protobuf 清理、ohbug+kly 集成
@@ -404,6 +404,146 @@ Bridge 只处理**系统级操作**，所有**数据密集型通信**走云端 A
 - 需要补充：Linear webhook + GitHub webhook → Santi API → 统一 issue 创建
 - 自动处理：收到问题 → 自动关联 ohbug event（如果有）→ 自动分配优先级 → 自动通知责任人
 
+#### 4.2.5 测试驱动开发（TDD）+ 自动化测试
+
+**核心原则：Test-First。先写测试，再写实现。所有业务逻辑在代码实现前必须有对应的测试用例。**
+
+##### TDD 工作流
+
+```
+Red → Green → Refactor → Repeat
+
+1. 写一个会失败的测试（定义期望行为）
+2. 写最少的代码让测试通过
+3. 重构，保持测试绿色
+4. 重复
+```
+
+每个新功能、每个 bug fix 都从测试开始。测试不是"写完代码补上去的"，测试是**设计工具** — 它迫使你在写代码前想清楚接口和行为。
+
+##### 单元测试（Vitest）
+
+| 层面                | 测试内容                                 | 覆盖率目标 |
+| ------------------- | ---------------------------------------- | ---------- |
+| Store 层（Zustand） | 状态变更、computed values、action 副作用 | > 95%      |
+| 工具函数（utils）   | 纯函数、数据转换、格式化                 | 100%       |
+| 自定义 Hooks        | 状态逻辑、副作用、生命周期               | > 90%      |
+| API 层              | request/response 转换、错误处理、重试    | > 90%      |
+| 组件逻辑            | 关键交互逻辑（非 snapshot 测试）         | > 80%      |
+
+**测试原则：**
+
+- 测试行为，不测试实现细节 — 重构不应该导致测试失败
+- 每个 store action 至少一个 happy path + 一个 error path
+- 所有数据转换函数必须覆盖边界条件（空数组、null、undefined、超长字符串）
+- Mock 仅 mock 外部依赖（API、WebSocket、bridge），不 mock 内部模块
+
+##### 端到端测试（Playwright）
+
+覆盖关键用户路径：
+
+| 用户路径      | 测试场景                                                    |
+| ------------- | ----------------------------------------------------------- |
+| Chat 核心流程 | 发送消息 → streaming 接收 → markdown 渲染 → 代码块高亮      |
+| Sidebar 导航  | session 列表加载 → 切换 session → 搜索 → 创建新 session     |
+| Settings      | 修改配置 → 保存 → 刷新后持久化 → 多窗口同步                 |
+| Workspace     | 文件预览 → diff viewer → artifacts panel                    |
+| 异常恢复      | 网络断开 → 重连 → 数据恢复；Santi 崩溃 → 自动重启 → UI 恢复 |
+| 多窗口        | 窗口 A 操作 → 窗口 B 同步；新开窗口 → 状态一致              |
+
+**E2E 测试策略：**
+
+- 每个关键用户路径至少一条 E2E 测试
+- 不测样式细节，只测功能正确性
+- 使用 Page Object Model 组织测试代码，隔离页面结构变化
+- CI 中每次 PR 运行核心路径测试，每日全量回归
+
+##### 测试工具链
+
+| 工具                      | 用途                | 备注                           |
+| ------------------------- | ------------------- | ------------------------------ |
+| Vitest                    | 单元测试 + 集成测试 | `vp test`，与 Vite 同 pipeline |
+| @testing-library/react    | 组件测试            | 测试用户行为而非实现细节       |
+| Playwright                | E2E 测试            | 跨浏览器 + WebView 测试        |
+| MSW (Mock Service Worker) | API Mock            | 前后端解耦测试                 |
+| @faker-js/faker           | 测试数据生成        | 避免硬编码测试数据             |
+
+##### CI/CD 测试门禁
+
+```
+PR 提交
+  │
+  ├── vp check --fix        ← type check + lint + format
+  ├── vp test               ← 单元测试 + 覆盖率检查
+  ├── playwright (核心路径)  ← 关键 E2E 测试
+  │
+  └── 全部通过 → 允许合并
+       └── 覆盖率下降 → 阻止合并
+
+每日 (Scheduled CI)
+  │
+  └── playwright (全量)     ← 全部 E2E 回归
+  └── 性能基准测试          ← 防止性能退化
+```
+
+#### 4.2.6 其他可靠性保障
+
+##### TypeScript 严格模式 + 运行时校验
+
+编译期 + 运行时双重保障，不信任任何外部输入：
+
+- **编译期**：`strict: true` + `noUncheckedIndexedAccess: true`，让编译器拦住大部分类型问题
+- **运行时**：zod schema 校验所有外部输入 — API 响应、WebSocket 消息、bridge 消息。不信任任何来自网络的数据
+- **端到端类型安全**：oRPC 已实现 client/server 类型共享，API 合约变更在编译期就能发现
+
+##### Error Boundary 分层降级
+
+**不允许白屏。** 任何模块崩溃都应该降级，而不是拖垮整个应用：
+
+```
+┌─ 应用级 Error Boundary ──────────────────────────────┐
+│                                                       │
+│  ┌─ Chat 模块 Error Boundary ─┐  ┌─ Sidebar EB ─┐   │
+│  │                             │  │               │   │
+│  │  ┌─ 单条消息 EB ─┐         │  │  session 列表 │   │
+│  │  │  消息渲染失败   │         │  │               │   │
+│  │  │  → 显示 fallback│         │  └───────────────┘   │
+│  │  │  → 不影响其他消息│         │                      │
+│  │  └────────────────┘         │  ┌─ Workspace EB ┐   │
+│  │                             │  │                │   │
+│  └─────────────────────────────┘  └────────────────┘   │
+│                                                       │
+│  每一层 catch 到错误 → 自动上报 ohbug                   │
+└───────────────────────────────────────────────────────┘
+```
+
+- **应用级**：整体 fallback + 自动 reload 选项
+- **模块级**：Chat 挂了不影响 Sidebar，Workspace 挂了不影响 Chat
+- **组件级**：单条消息渲染失败不影响其他消息
+- 每一层都自动上报 ohbug，附带组件树路径
+
+##### 健康检查 + 自愈机制
+
+| 场景                            | 检测方式                               | 自愈策略                                         |
+| ------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| Santi 进程崩溃                  | Swift 进程监控                         | 自动重启 + WebView 显示 fallback + ohbug 记录    |
+| WebView content process 被 kill | `webViewWebContentProcessDidTerminate` | 自动 reload + Zustand persist 恢复状态           |
+| 网络断开                        | WebSocket onclose / navigator.onLine   | 指数退避重连 + 本地缓存离线可读 + 重连后增量同步 |
+| API 请求失败                    | TanStack Query retry                   | 自动重试（指数退避）+ 错误上报 + 用户提示        |
+| 状态损坏                        | Zustand middleware 校验                | 检测到非法状态 → 重置为默认值 + 上报             |
+
+##### 代码质量自动化
+
+- **Pre-commit hooks**：`vp check --fix`（lint + format + type check），代码进仓库前就保证基本质量
+- **PR 自动 review**：MiniChen 已有能力，自动检查代码风格、潜在 bug、依赖变更
+- **Dependency audit**：定期扫描依赖安全漏洞（`pnpm audit`），CI 中自动化
+
+##### 渐进式发布 + 自动回滚
+
+- 新版本先推给少量用户（内部 → beta → 全量）
+- ohbug 实时监控错误率 → 错误率超阈值自动回滚
+- 结合 OS 数据可以精确判断"是不是新版本引入的问题"（用户行为模式没变但错误增加 → 代码问题）
+
 ### 4.3 速度
 
 > 原文：bun + viteplus + / 最好的第三方 library / 最好的算法
@@ -547,7 +687,7 @@ WebView 处理（业务级，React 内部路由）：
 
 ### 5.3 kly + ohbug — 一个系统的两面
 
-> **详细文档：** [kly 集成方案](./kly-integration-plan_zh-CN.md) — 涵盖 kly 现状评估、差距分析、`enrich_error_stack` 详细设计、MCP 工具扩展、Santi 集成代码、以及 CI 集成工作流。
+> **详细文档：** [可观测性系统设计](./observability-system-design_zh-CN.md) — 涵盖 ohbug SDK/Dashboard 架构、kly 代码索引、`enrich_error_stack` 详细设计、OS 上下文集成、以及完整的可观测性系统搭建方案。
 
 > kly 和 ohbug 是相辅相成的。kly 整理出来的文件级 index 可以和 error stack 相结合。
 
@@ -786,7 +926,7 @@ dist/
 
 #### Phase 4: 可观测性上线
 
-> **详细文档：** [Phase 3：切换 + 清理 + 可观测性 §3C–3D](./phase3-switch-and-observability_zh-CN.md) + [kly 集成方案](./kly-integration-plan_zh-CN.md)
+> **详细文档：** [Phase 3：切换 + 清理 + 可观测性 §3C–3D](./phase3-switch-and-observability_zh-CN.md) + [可观测性系统设计](./observability-system-design_zh-CN.md)
 
 - ohbug-dashboard 组件迁入
 - Error Stack → commit/行 + kly enrichment 链路打通
