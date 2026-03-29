@@ -12,6 +12,7 @@ Scaffold new TypeScript projects or migrate existing ones to a standardized Vite
 Before doing anything, ask the user:
 
 > What type of project do you want to create?
+>
 > 1. **Frontend app** — React + Tailwind + shadcn (SPA)
 > 2. **Library** — publishable npm package
 > 3. **Monorepo** — apps/ + packages/ structure
@@ -96,6 +97,8 @@ Replace `<project-name>` with the actual project/repo name. Ask the user if unsu
 
 ### 3b. Required scripts
 
+**For single-package projects (app or library):**
+
 ```json
 {
   "scripts": {
@@ -112,13 +115,33 @@ Replace `<project-name>` with the actual project/repo name. Ask the user if unsu
 }
 ```
 
+**For monorepo root `package.json`:**
+
+```json
+{
+  "scripts": {
+    "dev": "pnpm run build && pnpm -r --parallel run dev",
+    "build": "vp run --filter './packages/*' build",
+    "check": "vp check --fix",
+    "lint": "vp lint --fix",
+    "fmt": "vp fmt",
+    "test": "vp test",
+    "up": "taze major -Ir",
+    "prepare": "vp config"
+  }
+}
+```
+
 Notes:
+
 - `check` must include `--fix` — this is the primary quality gate
 - `up: taze major -Ir` — interactive major version upgrade via taze
 - `prepare: vp config` sets up git hooks on install
 - For libraries, `build` should use `vp build` (tsdown via vite-plus), not `tsc && vp build`
 - For apps with custom build steps, `build` can chain commands, but prefer keeping it simple
-- Monorepo root may have additional scripts like `"dev:web": "vp run --filter web dev"`
+- **Monorepo `dev`**: Use `pnpm run build && pnpm -r --parallel run dev`. The initial `build` ensures all `dist/` outputs exist so that downstream packages (apps, playground) can resolve workspace dependencies during Vite's dependency pre-bundling scan. Then `pnpm -r --parallel` launches all watch processes concurrently. Do NOT use `vp run -r dev` — each sub-package's `dev` script is a long-running watch process (`vp pack --watch` or `vp dev`), and `vp run -r` executes tasks in dependency order waiting for each to complete, so persistent/watch tasks will block and never proceed to the next package.
+- **Monorepo `build`**: Can use `vp run -r build` or `vp run --filter './packages/*' build` because build tasks complete and exit. `vp run` handles dependency ordering and optional caching.
+- To target specific packages: `vp run --filter @my/app dev` or `vp run --filter ./apps/web dev`
 
 ### 3c. Module system and package manager
 
@@ -227,6 +250,7 @@ Also ensure `.vscode/extensions.json` recommends the Oxc extension:
 ```
 
 Notes:
+
 - `"types": ["vite/client", "node"]` — `vite/client` resolves to vite-plus client types via the npm alias
 - `"jsx": "react-jsx"` — only for React projects; remove for pure libraries without React
 - `"paths"` — the `@/*` alias matches the `resolve.alias` in `vite.config.ts`
@@ -281,6 +305,117 @@ export default defineConfig({
 ```
 
 For **frontend apps**, merge the React/Tailwind Vite config on top of this base. For **libraries**, the `pack` section is critical — keep it. For **apps** that don't publish, `pack` can be removed.
+
+### Monorepo: per-package `vite.config.ts` (build task + caching)
+
+In monorepos, define `build` as a **`vite.config.ts` task** instead of a `package.json` script. This is critical for build caching — `vp pack` writes to `dist/` and vp task's auto-tracking records those writes as input changes, causing perpetual cache misses for package.json scripts. Defining it as a task with `input` exclusions solves this.
+
+**Each library package's `vite.config.ts`:**
+
+```typescript
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  run: {
+    tasks: {
+      build: {
+        command: "vp pack",
+        // Exclude build outputs and temp files from cache fingerprinting
+        // to avoid perpetual cache misses.
+        input: [{ auto: true }, "!dist/**", "!node_modules/**"],
+      },
+    },
+  },
+  pack: {
+    dts: true,
+    exports: true,
+    sourcemap: true,
+  },
+});
+```
+
+**Each library package's `package.json`** should only have `dev` (persistent watch task stays as a script):
+
+```json
+{
+  "scripts": {
+    "dev": "vp pack --watch"
+  }
+}
+```
+
+Do **not** put `"build"` in `package.json` if it's defined as a task in `vite.config.ts` — a task name cannot exist in both places.
+
+### Monorepo: workspace resolve alias for testing
+
+In monorepos, workspace imports (e.g., `import { Client } from "@my/core"`) resolve through pnpm symlinks → `package.json` exports → `dist/index.mjs`. This means **tests fail if dependencies haven't been built first**.
+
+Fix this by adding `resolve.alias` in the **root `vite.config.ts`** so Vitest resolves workspace imports directly to source files:
+
+```typescript
+import { resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { defineConfig } from "vite-plus";
+
+// Dynamically generate resolve aliases for all workspace packages.
+// This ensures Vitest resolves workspace imports to source files (not dist),
+// so tests work without a prior build step.
+const SCOPE = "@my"; // your npm scope
+const PREFIX = "my-"; // directory prefix (e.g., "my-core" → "@my/core")
+// Types-only packages (only .d.ts files) must be excluded — Vite
+// can't resolve them as runtime modules.
+const TYPES_ONLY_PACKAGES = new Set(["my-types"]);
+
+const workspaceAlias: Record<string, string> = {};
+for (const d of readdirSync(resolve(import.meta.dirname, "packages"), { withFileTypes: true })) {
+  if (!d.isDirectory() || !d.name.startsWith(PREFIX) || TYPES_ONLY_PACKAGES.has(d.name)) continue;
+  workspaceAlias[`${SCOPE}/${d.name.replace(PREFIX, "")}`] = resolve(
+    import.meta.dirname,
+    `packages/${d.name}/src`,
+  );
+}
+
+export default defineConfig({
+  resolve: {
+    alias: workspaceAlias,
+  },
+  // ... rest of root config (run, staged, lint, test, fmt)
+});
+```
+
+With this alias, running `vp test` works immediately after `vp install` — no build step needed.
+
+### Monorepo: additional task definitions (optional)
+
+You can define additional orchestration tasks in the root `vite.config.ts`:
+
+```typescript
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  run: {
+    tasks: {
+      deploy: {
+        command: "deploy-script --prod",
+        cache: false,
+        dependsOn: ["build", "test"],
+      },
+    },
+  },
+  // ... rest of config
+});
+```
+
+Key `run.tasks` options:
+
+- `command` — shell command to run
+- `dependsOn` — tasks that must complete first; supports cross-package refs like `"@my/core#build"`
+- `cache` — whether to cache output (default: `true` for tasks in config, `false` for package.json scripts); set to `false` for dev servers
+- `env` — environment variables included in cache fingerprint (e.g., `["NODE_ENV"]`; supports wildcards like `"VITE_*"`)
+- `input` — explicit file patterns for cache fingerprinting (default: auto-detected); always exclude `"!dist/**"` and `"!node_modules/**"` for build tasks
+- `cwd` — working directory relative to package root
+
+**Important:** `vp run -r` / `vp run --filter` is designed for tasks that **complete and exit** (build, lint, test). For persistent/watch tasks (dev servers, `vp pack --watch`), use `pnpm -r --parallel run dev` instead.
 
 ---
 
@@ -397,7 +532,7 @@ Set up `wrangler.jsonc` for Cloudflare Workers:
   "compatibility_date": "2025-01-01",
   "d1_databases": [],
   "r2_buckets": [],
-  "kv_namespaces": []
+  "kv_namespaces": [],
 }
 ```
 
@@ -455,9 +590,9 @@ Update `wrangler.jsonc` to bind D1:
     {
       "binding": "DB",
       "database_name": "<project-name>-db",
-      "database_id": "<create-via-wrangler>"
-    }
-  ]
+      "database_id": "<create-via-wrangler>",
+    },
+  ],
 }
 ```
 
@@ -592,6 +727,9 @@ When a project already uses Vite+ or is partially set up, run through this check
 - [ ] `scripts.up` exists and is `"taze major -Ir"`, with `taze` in devDependencies
 - [ ] `scripts.prepare` is `"vp config"`
 - [ ] `scripts.build` uses `vp build` (not `tsc && vp build` unless there's a specific reason)
+- [ ] **Monorepo**: `build` is defined as a `vite.config.ts` task (not a `package.json` script) with `input: [{ auto: true }, "!dist/**", "!node_modules/**"]` for proper caching
+- [ ] **Monorepo**: root `vite.config.ts` has `resolve.alias` mapping workspace packages to source dirs so tests work without building
+- [ ] **Monorepo**: types-only packages (only `.d.ts` files) are excluded from `resolve.alias`
 - [ ] `type` is `"module"`
 - [ ] `packageManager` field is set
 - [ ] `pnpm.overrides` has both `vite` and `vitest` aliases
