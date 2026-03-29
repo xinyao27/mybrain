@@ -6,6 +6,7 @@
 >
 > **相关文档：**
 >
+> - [DX：浏览器优先开发策略](./dx-browser-first-development_zh-CN.md) — 纯浏览器开发 Agent，一键切入 native Mac 应用
 > - [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — 用 oRPC 替换 Protobuf/PostBox 的详细设计
 > - [可观测性系统设计](./observability-system-design_zh-CN.md) — 搭建 Paperboy 可观测性系统（ohbug + kly + OS 上下文）
 > - [Phase 1：端到端验证](./phase1-e2e-verification_zh-CN.md) — Swift → Santi → WebView → React → oRPC 全链路验证

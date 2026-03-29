@@ -6,6 +6,7 @@
 >
 > **Related Documents:**
 >
+> - [DX: Browser-First Development Strategy](./dx-browser-first-development.md) — Develop the Agent in the browser, one-click switch to native Mac app
 > - [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — Detailed design for replacing Protobuf/PostBox with oRPC
 > - [Observability System Design](./observability-system-design.md) — Building the Paperboy observability system (ohbug + kly + OS context)
 > - [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — Swift → Santi → WebView → React → oRPC pipeline validation
