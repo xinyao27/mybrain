@@ -6,8 +6,9 @@
 >
 > **Related Documents:**
 >
+> - [DX: Browser-First Development Strategy](./dx-browser-first-development.md) — Develop the Agent in the browser, one-click switch to native Mac app
 > - [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — Detailed design for replacing Protobuf/PostBox with oRPC
-> - [kly Integration Plan](./kly-integration-plan.md) — How kly integrates into the Paperboy observability system
+> - [Observability System Design](./observability-system-design.md) — Building the Paperboy observability system (ohbug + kly + OS context)
 > - [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — Swift → Santi → WebView → React → oRPC pipeline validation
 > - [Phase 2: Core UI Rebuild](./phase2-core-ui-rebuild.md) — Chat, Sidebar, Settings, Workspace rebuild details
 > - [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal, Protobuf cleanup, ohbug+kly integration
@@ -423,6 +424,146 @@ Traditional error monitoring platforms (Sentry / Datadog) can only see data from
 - Needs to be added: Linear webhook + GitHub webhook → Santi API → unified issue creation
 - Automatic processing: Receive issue → automatically associate ohbug event (if any) → automatically assign priority → automatically notify responsible person
 
+#### 4.2.5 Test-Driven Development (TDD) + Automated Testing
+
+**Core principle: Test-First. Write tests before implementation. All business logic must have corresponding test cases before code is written.**
+
+##### TDD Workflow
+
+```
+Red → Green → Refactor → Repeat
+
+1. Write a failing test (define expected behavior)
+2. Write the minimum code to make the test pass
+3. Refactor, keeping tests green
+4. Repeat
+```
+
+Every new feature and every bug fix starts with a test. Tests are not "something you tack on after writing code" — tests are a **design tool** that forces you to think through interfaces and behavior before writing code.
+
+##### Unit Testing (Vitest)
+
+| Layer                 | What to Test                                          | Coverage Target |
+| --------------------- | ----------------------------------------------------- | --------------- |
+| Store layer (Zustand) | State mutations, computed values, action side effects | > 95%           |
+| Utility functions     | Pure functions, data transformations, formatting      | 100%            |
+| Custom Hooks          | State logic, side effects, lifecycle                  | > 90%           |
+| API layer             | Request/response transforms, error handling, retry    | > 90%           |
+| Component logic       | Key interaction logic (not snapshot testing)          | > 80%           |
+
+**Testing principles:**
+
+- Test behavior, not implementation details — refactoring should not break tests
+- Every store action gets at least one happy path + one error path test
+- All data transformation functions must cover boundary conditions (empty arrays, null, undefined, excessively long strings)
+- Only mock external dependencies (API, WebSocket, bridge) — never mock internal modules
+
+##### End-to-End Testing (Playwright)
+
+Cover critical user paths:
+
+| User Path          | Test Scenarios                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| Chat core flow     | Send message → streaming receive → markdown render → code block highlight                |
+| Sidebar navigation | Session list load → switch session → search → create new session                         |
+| Settings           | Modify config → save → persists after refresh → multi-window sync                        |
+| Workspace          | File preview → diff viewer → artifacts panel                                             |
+| Error recovery     | Network disconnect → reconnect → data recovery; Santi crash → auto-restart → UI recovery |
+| Multi-window       | Window A action → Window B sync; open new window → state consistency                     |
+
+**E2E testing strategy:**
+
+- At least one E2E test for each critical user path
+- Don't test style details — only test functional correctness
+- Use Page Object Model to organize test code, isolating page structure changes
+- CI runs core path tests on every PR; full regression runs daily
+
+##### Testing Toolchain
+
+| Tool                      | Purpose                        | Notes                                   |
+| ------------------------- | ------------------------------ | --------------------------------------- |
+| Vitest                    | Unit tests + integration tests | `vp test`, same pipeline as Vite        |
+| @testing-library/react    | Component testing              | Tests user behavior, not implementation |
+| Playwright                | E2E testing                    | Cross-browser + WebView testing         |
+| MSW (Mock Service Worker) | API mocking                    | Decoupled frontend/backend testing      |
+| @faker-js/faker           | Test data generation           | Avoid hardcoded test data               |
+
+##### CI/CD Test Gates
+
+```
+PR Submitted
+  │
+  ├── vp check --fix           ← type check + lint + format
+  ├── vp test                  ← unit tests + coverage check
+  ├── playwright (core paths)  ← critical E2E tests
+  │
+  └── All pass → merge allowed
+       └── Coverage decreased → merge blocked
+
+Daily (Scheduled CI)
+  │
+  └── playwright (full suite)  ← full E2E regression
+  └── performance benchmarks   ← prevent performance regressions
+```
+
+#### 4.2.6 Other Reliability Measures
+
+##### TypeScript Strict Mode + Runtime Validation
+
+Compile-time + runtime dual guarantees — trust no external input:
+
+- **Compile-time**: `strict: true` + `noUncheckedIndexedAccess: true` — let the compiler catch most type issues
+- **Runtime**: zod schema validation on all external inputs — API responses, WebSocket messages, bridge messages. Trust no data from the network
+- **End-to-end type safety**: oRPC already implements client/server type sharing; API contract changes are caught at compile time
+
+##### Layered Error Boundary Degradation
+
+**No white screens allowed.** Any module crash should degrade gracefully rather than take down the entire application:
+
+```
+┌─ App-level Error Boundary ───────────────────────────┐
+│                                                       │
+│  ┌─ Chat Module EB ───────────┐  ┌─ Sidebar EB ──┐   │
+│  │                             │  │               │   │
+│  │  ┌─ Single Message EB ──┐  │  │  session list │   │
+│  │  │  Message render fails │  │  │               │   │
+│  │  │  → show fallback      │  │  └───────────────┘   │
+│  │  │  → other msgs unaffected│ │                      │
+│  │  └───────────────────────┘  │  ┌─ Workspace EB ┐   │
+│  │                             │  │                │   │
+│  └─────────────────────────────┘  └────────────────┘   │
+│                                                       │
+│  Every layer catches errors → auto-reports to ohbug    │
+└───────────────────────────────────────────────────────┘
+```
+
+- **App-level**: Overall fallback + auto-reload option
+- **Module-level**: Chat crashing doesn't affect Sidebar; Workspace crashing doesn't affect Chat
+- **Component-level**: A single message render failure doesn't affect other messages
+- Every layer auto-reports to ohbug with the component tree path
+
+##### Health Checks + Self-Healing
+
+| Scenario                       | Detection Method                       | Self-Healing Strategy                                                                    |
+| ------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Santi process crash            | Swift process monitoring               | Auto-restart + WebView shows fallback + ohbug records crash                              |
+| WebView content process killed | `webViewWebContentProcessDidTerminate` | Auto-reload + Zustand persist restores state                                             |
+| Network disconnect             | WebSocket onclose / navigator.onLine   | Exponential backoff reconnect + local cache offline read + incremental sync on reconnect |
+| API request failure            | TanStack Query retry                   | Auto-retry (exponential backoff) + error report + user notification                      |
+| State corruption               | Zustand middleware validation          | Detect invalid state → reset to defaults + report                                        |
+
+##### Code Quality Automation
+
+- **Pre-commit hooks**: `vp check --fix` (lint + format + type check) — guarantee baseline quality before code enters the repo
+- **Automated PR review**: MiniChen already has this capability — auto-checks code style, potential bugs, dependency changes
+- **Dependency audit**: Regular dependency vulnerability scanning (`pnpm audit`), automated in CI
+
+##### Progressive Rollout + Auto-Rollback
+
+- New versions roll out to a small group first (internal → beta → general availability)
+- ohbug monitors error rate in real-time → auto-rollback when error rate exceeds threshold
+- Combined with OS data, can precisely determine "whether the new version introduced the problem" (user behavior patterns unchanged but errors increased → code issue)
+
 ### 4.3 Speed
 
 > Original: bun + viteplus / The best third-party libraries / The best algorithms
@@ -566,7 +707,7 @@ The ongoing migration work on the current `feature/shadcn` branch continues, but
 
 ### 5.3 kly + ohbug — Two Sides of One System
 
-> **Detailed document:** [kly Integration Plan](./kly-integration-plan.md) — covers kly's current state assessment, gap analysis, `enrich_error_stack` detailed design, MCP tool extensions, Santi integration code, and CI integration workflow.
+> **Detailed document:** [Observability System Design](./observability-system-design.md) — covers ohbug SDK/Dashboard architecture, kly code index, `enrich_error_stack` detailed design, OS context integration, and the complete observability system design.
 
 > kly and ohbug are complementary. The file-level index that kly organizes can be combined with error stacks.
 
@@ -805,7 +946,7 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 
 #### Phase 4: Observability Goes Live
 
-> **Detailed documents:** [Phase 3: Switch + Cleanup + Observability §3C–3D](./phase3-switch-and-observability.md) + [kly Integration Plan](./kly-integration-plan.md)
+> **Detailed documents:** [Phase 3: Switch + Cleanup + Observability §3C–3D](./phase3-switch-and-observability.md) + [Observability System Design](./observability-system-design.md)
 
 - ohbug-dashboard components migrated in
 - Error Stack → commit/line + kly enrichment pipeline connected end-to-end

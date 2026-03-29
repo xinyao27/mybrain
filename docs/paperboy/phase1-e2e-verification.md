@@ -7,7 +7,7 @@
 >
 > - [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
 > - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
-> - [kly Integration Plan](./kly-integration-plan_zh-CN.md)
+> - [Observability System Design](./observability-system-design.md)
 
 ## 1. Objective
 

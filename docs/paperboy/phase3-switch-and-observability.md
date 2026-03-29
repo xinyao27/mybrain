@@ -8,7 +8,7 @@
 >
 > - [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
 > - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
-> - [kly Integration Plan](./kly-integration-plan_zh-CN.md)
+> - [Observability System Design](./observability-system-design.md)
 
 ## 1. Goals
 
@@ -57,7 +57,7 @@ Phase 2 built the React UI. Phase 3 does three things:
 - kly MCP tool extensions (`get_dependents`, `get_file_history`, `enrich_error_stack`)
 - Santi imports kly library functions (`KlyService`)
 - Error stack + OS context converge in the cloud
-- See [kly Integration Plan](./kly-integration-plan_zh-CN.md) for details
+- See [Observability System Design](./observability-system-design.md) for details
 
 > **Note: The specific implementation of ohbug and kly is owned by Xinyao directly. Only integration points are documented here — implementation details are not expanded.**
 
