@@ -5,6 +5,8 @@
 > Status: Draft
 > Related: [Paperboy Frontend Major Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
 
+This document details the redesign of Paperboy's communication layer — replacing three separate protocols (Protobuf WebSocket, JSON WebSocket, WKScriptMessageHandler) with a unified oRPC-based architecture. It covers the dual-adapter design (WebSocket for React, HTTP/OpenAPI for Swift), the PostBox universal bridge abstraction, streaming and multi-window synchronization patterns, error handling strategy, and a step-by-step migration path from the legacy Protobuf stack.
+
 ## 1. Background
 
 ### 1.1 Current Communication Architecture (To Be Replaced)

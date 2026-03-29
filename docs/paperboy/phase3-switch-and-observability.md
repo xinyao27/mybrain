@@ -10,6 +10,8 @@
 > - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
 > - [Observability System Design](./observability-system-design.md)
 
+This document is the execution plan for Phase 3 — the final phase of the Paperboy frontend rewrite. It covers three major tasks: (1) switching the production UI from SwiftUI to the React SPA built in Phase 2, (2) removing all legacy Protobuf code and fully adopting oRPC as the sole communication protocol, and (3) integrating the ohbug + kly observability stack. Includes the post-switch communication architecture, cleanup checklist, observability integration steps, and acceptance criteria.
+
 ## 1. Goals
 
 **Switch to the React version in one shot, clean up all legacy code, and integrate the observability system.**

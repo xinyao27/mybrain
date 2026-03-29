@@ -10,6 +10,8 @@
 > - [通信协议重设计](./communication-protocol_zh-CN.md)
 > - [可观测性系统设计](./observability-system-design_zh-CN.md)
 
+本文档是 Phase 3——Paperboy 前端重写最后阶段的执行方案。涵盖三项核心任务：(1) 将生产环境 UI 从 SwiftUI 切换为 Phase 2 构建的 React SPA，(2) 删除所有 Protobuf 遗留代码并全面采用 oRPC 作为唯一通信协议，(3) 集成 ohbug + kly 可观测性体系。包含切换后的通信架构、清理清单、可观测性接入步骤及验收标准。
+
 ## 一、目标
 
 **一次性切换到 React 版本，清理所有旧代码，接入可观测性系统。**

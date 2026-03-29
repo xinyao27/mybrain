@@ -13,6 +13,8 @@
 > - [Phase 2：核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md) — Chat、Sidebar、Settings、Workspace 与 SwiftUI→React 清单（简体中文）
 > - [Phase 3：切换 + 清理 + 可观测性](./phase3-switch-and-observability_zh-CN.md) — SwiftUI 删除、Protobuf 清理、ohbug+kly 集成
 
+本文档是 Paperboy 前端大重写的总方案——用嵌入 WKWebView 薄壳的 React SPA 替换现有的 SwiftUI UI。阐述了重写动机（团队技能栈错配、跨端需求、可观测性盲区），定义了四大设计支柱（React everywhere、可观测性 + 可靠性、速度、UX），描绘了目标架构，明确了技术选型，并提供了从端到端验证到生产切换的分阶段交付路线。
+
 ## 一、背景与动机
 
 Paperboy 当前的前端是纯 SwiftUI 实现，刚刚完成了从 AppKit 到 SwiftUI 的全量迁移。但这个架构面临几个核心问题：

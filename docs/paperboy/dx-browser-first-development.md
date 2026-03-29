@@ -9,6 +9,8 @@
 > - [Frontend Grand Rewrite Plan](./paperboy-frontend-rewrite.md) — The overall rewrite strategy this DX approach enables
 > - [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — PostBox / oRPC bridge design that powers the native switch
 
+This document describes the "Browser-First" developer experience strategy for the Paperboy frontend rewrite. Since the rewrite produces a standard React SPA that communicates with cloud APIs, the entire Agent UI can be developed and tested in a regular browser — no Xcode, no Swift compilation, no simulator. Once the PostBox native bridge and the thin Swift shell are ready, the same React SPA loads inside WKWebView with zero code changes. Covers the two development phases (browser-only → native switch), environment detection, PostBox adapter abstraction, and the DX benefits comparison.
+
 ## 1. Core Insight
 
 Since the frontend rewrite produces a standard React SPA that talks to cloud APIs, **we can develop the entire Agent directly in the browser as a pure Web App**. No Xcode, no Swift compilation, no simulator — just a browser tab.

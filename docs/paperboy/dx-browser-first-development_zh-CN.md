@@ -9,6 +9,8 @@
 > - [前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md) — 本 DX 策略所依托的整体重写方案
 > - [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — PostBox / oRPC bridge 设计，支撑 native 切换
 
+本文档描述了 Paperboy 前端重写的「浏览器优先」开发体验策略。由于重写产出的是一个标准 React SPA、直连云端 API，整个 Agent UI 可以直接在普通浏览器中开发和测试——不需要 Xcode、不需要 Swift 编译、不需要模拟器。当 PostBox native 桥接和 Swift 薄壳准备就绪后，同一个 React SPA 在 WKWebView 里加载，代码零改动。涵盖两个开发阶段（纯浏览器 → native 切换）、环境检测、PostBox 适配器抽象以及 DX 收益对比。
+
 ## 一、核心洞察
 
 既然前端重写产出的是一个标准 React SPA、直连云端 API，那**我们完全可以直接在浏览器里开发整个 Agent，作为纯 Web App 运行**。不需要 Xcode，不需要 Swift 编译，不需要模拟器——只需要一个浏览器标签页。

@@ -9,7 +9,40 @@
 - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
 - Chinese version: [Phase 2：核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md)
 
-This document combines the Phase 2 **product/execution plan** and the **SwiftUI → React migration checklist** in English. For the checklist-only anchor, see [Migration checklist](#part-ii-migration-checklist).
+This document combines the Phase 2 **product/execution plan** and the **SwiftUI → React migration checklist** in English. It covers the core UI rebuild — rewriting Chat, Sidebar, Settings, and Workspace from SwiftUI to React — along with the product change from "Spaces" to "Project", the Protobuf-to-oRPC migration for each service, and a line-by-line checklist mapping every SwiftUI view to its React equivalent. For the checklist-only anchor, see [Migration checklist](#part-ii-migration-checklist).
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    macOS Native Shell (Swift)                        │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │                     WKWebView                                │    │
+│  │                                                              │    │
+│  │  ┌────────────┐  ┌────────────┐  ┌───────────┐  ┌────────┐  │    │
+│  │  │   Chat     │  │  Sidebar   │  │ Settings  │  │Workspace│  │    │
+│  │  │  (React)   │  │  (React)   │  │  (React)  │  │ (React) │  │    │
+│  │  └─────┬──────┘  └─────┬──────┘  └─────┬─────┘  └────┬───┘  │    │
+│  │        │               │               │              │       │    │
+│  │        └───────────────┴───────┬────────┴──────────────┘       │    │
+│  │                                │                               │    │
+│  │                    ┌───────────▼───────────┐                   │    │
+│  │                    │   PostBox (pb.*)       │                   │    │
+│  │                    │   oRPC channel         │                   │    │
+│  │                    │   + native channel     │                   │    │
+│  │                    └─────┬───────────┬─────┘                   │    │
+│  └──────────────────────────┼───────────┼─────────────────────────┘    │
+│                             │ WS /rpc   │ PostBox                      │
+│                             ▼           ▼                              │
+│  ┌──────────────────┐    ┌────────────────────┐                       │
+│  │ Santi (Bun)       │    │ Swift Shell         │                       │
+│  │ oRPC procedures   │    │ Window / Orb /      │                       │
+│  │ (replaces Proto-  │    │ Permissions /        │                       │
+│  │  buf services)    │    │ OS data collection   │                       │
+│  └──────────────────┘    └────────────────────┘                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 

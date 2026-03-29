@@ -5,6 +5,8 @@
 > 状态：草案（Draft）
 > 关联文档：[Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)
 
+本文档详述了 Paperboy 通信层的重新设计——用统一的 oRPC 架构替换现有的三套独立协议（Protobuf WebSocket、JSON WebSocket、WKScriptMessageHandler）。涵盖双 Adapter 设计（WebSocket 给 React、HTTP/OpenAPI 给 Swift）、PostBox 统一通信桥抽象、流式传输与多窗口同步模式、错误处理策略，以及从旧 Protobuf 体系逐步迁移的路径。
+
 ## 一、背景
 
 ### 1.1 现有通信架构（要被替换的）

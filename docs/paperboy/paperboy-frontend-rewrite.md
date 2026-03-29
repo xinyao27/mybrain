@@ -13,6 +13,8 @@
 > - [Phase 2: Core UI Rebuild & Migration](./phase2-core-ui-rebuild.md) — plan plus SwiftUI→React checklist (English)
 > - [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal, Protobuf cleanup, ohbug+kly integration
 
+This is the master plan for the Paperboy frontend grand rewrite — replacing the existing SwiftUI-based UI with a React SPA embedded in a thin native shell via WKWebView. It explains the motivation (team skill-stack mismatch, cross-platform needs, observability gaps), lays out the four design pillars (React everywhere, observability + reliability, speed, UX), defines the target architecture, details the technology stack, and provides a phased delivery roadmap from end-to-end verification through production switchover.
+
 ## 1. Background & Motivation
 
 Paperboy's current frontend is a pure SwiftUI implementation that just completed a full migration from AppKit to SwiftUI. However, this architecture faces several core problems:

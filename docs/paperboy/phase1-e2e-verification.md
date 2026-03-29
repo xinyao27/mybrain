@@ -9,6 +9,33 @@
 > - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
 > - [Observability System Design](./observability-system-design.md)
 
+This document is the execution plan for Phase 1 of the Paperboy frontend rewrite. Its sole goal is to prove that the full end-to-end pipeline — Swift native shell → Santi backend → WKWebView → React SPA → oRPC (request/response + streaming) — works correctly before any real UI is built. Covers oRPC server setup, shared type packages, React SPA scaffolding, WebView mounting, streaming verification, and acceptance criteria.
+
+### Architecture Overview
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                     macOS Native Shell (Swift)                    │
+│                                                                   │
+│  ┌─────────────────┐    ┌──────────────────────────────────────┐  │
+│  │ ProcessManager   │    │           WKWebView                  │  │
+│  │ launches Santi   │    │                                      │  │
+│  │ child process    │    │  ┌──────────────────────────────────┐│  │
+│  └────────┬────────┘    │  │      React SPA (Vite+)           ││  │
+│           │              │  │                                   ││  │
+│           │  spawn       │  │  oRPC WS Client (partysocket)    ││  │
+│           ▼              │  │         │                         ││  │
+│  ┌─────────────────┐    │  └─────────┼─────────────────────────┘│  │
+│  │ Santi (Bun)      │    │           │ WebSocket /rpc            │  │
+│  │                  │◄───┼───────────┘                           │  │
+│  │  /rpc  → oRPC WS │    │                                      │  │
+│  │  /api/* → OpenAPI │    │  Renders health check result         │  │
+│  │  /ws   → Protobuf │    │  + streaming demo output             │  │
+│  │  (legacy, kept)  │    └──────────────────────────────────────┘  │
+│  └─────────────────┘                                              │
+└───────────────────────────────────────────────────────────────────┘
+```
+
 ## 1. Objective
 
 **Prove that the Swift → Santi → WKWebView → React → oRPC → Render pipeline works end-to-end.**

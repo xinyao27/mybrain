@@ -9,6 +9,33 @@
 > - [通信协议重设计](./communication-protocol_zh-CN.md)
 > - [可观测性系统设计](./observability-system-design_zh-CN.md)
 
+本文档是 Paperboy 前端重写 Phase 1 的执行方案。唯一目标是在构建任何真实 UI 之前，验证完整的端到端链路——Swift native shell → Santi 后端 → WKWebView → React SPA → oRPC（request/response + streaming）——能够正确运行。涵盖 oRPC 服务端配置、共享类型包、React SPA 脚手架、WebView 挂载、流式传输验证及验收标准。
+
+### 架构概览
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                     macOS Native Shell (Swift)                    │
+│                                                                   │
+│  ┌─────────────────┐    ┌──────────────────────────────────────┐  │
+│  │ ProcessManager   │    │           WKWebView                  │  │
+│  │ 启动 Santi       │    │                                      │  │
+│  │ 子进程           │    │  ┌──────────────────────────────────┐│  │
+│  └────────┬────────┘    │  │      React SPA (Vite+)           ││  │
+│           │              │  │                                   ││  │
+│           │  spawn       │  │  oRPC WS Client (partysocket)    ││  │
+│           ▼              │  │         │                         ││  │
+│  ┌─────────────────┐    │  └─────────┼─────────────────────────┘│  │
+│  │ Santi (Bun)      │    │           │ WebSocket /rpc            │  │
+│  │                  │◄───┼───────────┘                           │  │
+│  │  /rpc  → oRPC WS │    │                                      │  │
+│  │  /api/* → OpenAPI │    │  渲染 health check 结果               │  │
+│  │  /ws   → Protobuf │    │  + streaming demo 输出               │  │
+│  │  (保留旧协议)     │    └──────────────────────────────────────┘  │
+│  └─────────────────┘                                              │
+└───────────────────────────────────────────────────────────────────┘
+```
+
 ## 一、目标
 
 **证明 Swift → Santi → WKWebView → React → oRPC → 渲染 这条链路是通的。**

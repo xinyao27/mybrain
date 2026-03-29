@@ -6,6 +6,8 @@
 > Status: Draft
 > Related document: [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite.md) — Section 4.2 "Observability + Reliability"
 
+This document defines the architecture and implementation plan for Paperboy's observability system. It combines three proprietary tools — ohbug (runtime error tracking), kly (static code intelligence), and the Paperboy OS capture layer — into a unified pipeline that produces enriched error reports with full runtime, code, and user-activity context. Covers system architecture, data flows, cloud aggregation, the observability dashboard, and a phased delivery roadmap.
+
 ## 1. Vision
 
 **Any error can be traced to its root cause — automatically, with full context, without asking the user "what did you do?"**
