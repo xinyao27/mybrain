@@ -3,7 +3,7 @@
 > 创建日期：2026-03-28
 > 作者：Xinyao Chen
 > 状态：草案（Draft）
-> 前置条件：[Phase 2 核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) 完成
+> 前置条件：[Phase 2 核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md) 完成
 > 关联文档：
 >
 > - [Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)

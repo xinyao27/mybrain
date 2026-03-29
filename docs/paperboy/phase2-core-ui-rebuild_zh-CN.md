@@ -1,13 +1,19 @@
-# Phase 2：核心 UI 重建
+# Phase 2：核心 UI 重建与 SwiftUI → React 迁移清单
 
-> 创建日期：2026-03-28
-> 作者：Xinyao Chen
-> 状态：草案（Draft）
+> 计划创建日期：2026-03-28 · 清单创建日期：2026-03-29 · 作者：Xinyao Chen · 状态：草案（Draft）  
 > 前置条件：[Phase 1 端到端链路验证](./phase1-e2e-verification_zh-CN.md) 完成
-> 关联文档：
->
-> - [Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)
-> - [通信协议重设计](./communication-protocol_zh-CN.md)
+
+**关联文档：**
+
+- [Paperboy 前端大重写方案](./paperboy-frontend-rewrite_zh-CN.md)
+- [通信协议重设计](./communication-protocol_zh-CN.md)
+- English: [Phase 2: Core UI Rebuild & Migration](./phase2-core-ui-rebuild.md)
+
+本文档在同一文件内包含 Phase 2 **产品/执行计划** 与 **SwiftUI → React 逐项迁移清单**（简体中文）。清单部分可直接跳转：[第二部份 · 迁移清单](#part-2-migration-checklist-zh)。
+
+---
+
+## 第一部份 — 核心 UI 重建
 
 ## 一、目标
 
@@ -367,3 +373,287 @@ Phase 2 结束时必须满足：
 **风险：** 新架构用 MemoryPublisher 广播替代进程内单例 ChatStore。快速开关窗口、同时多窗口操作时可能短暂不一致，WS 断线重连期间可能丢消息。
 
 **对策：** 用 lastEventId 做断线恢复，Publisher 开启 `resumeRetentionSeconds: 300`（5分钟缓冲）。关键操作（session 创建/删除）做乐观更新 + 服务端确认。
+
+---
+
+<a id="part-2-migration-checklist-zh"></a>
+
+## 第二部份 — SwiftUI → React 逐项迁移清单
+
+> **说明：** 执行级补充：列出需在 React / WebView 中重写的 SwiftUI 界面、数据流与交互。
+
+**源码位置：** Paperboy macOS 应用不在本仓库；SwiftUI 位于 Paperboy monorepo 的 `packages/paperboy/Paperboy/`（本地克隆常见路径：`~/work/paperboy`）。
+
+## 与 Phase 2 文档的对应关系
+
+| 工作项            | 本文档章节                              |
+| ----------------- | --------------------------------------- |
+| Sidebar 迁移      | 第二节 Sidebar                          |
+| Message List 迁移 | 第三节 Chat 消息列表                    |
+| Scroll 行为迁移   | 第三节内 3.5–3.6（滚底与历史 prefetch） |
+| Input 迁移        | 第四节 Chat Input                       |
+| Tool Call UI 迁移 | 第五节 Tool Call UI                     |
+| 其他组件迁移      | 第六至十节                              |
+| 设计系统迁移      | 第十二节 设计系统                       |
+| PostBox 桥接      | 第十四节 原生桥接                       |
+| Settings 迁移     | 第十一节 Settings                       |
+
+---
+
+## 一、整体布局层级（Layout Hierarchy）
+
+### 1.1 当前 SwiftUI 层级
+
+源码入口：`packages/paperboy/Paperboy/Views/Chat/ChatContentRootView.swift`
+
+```
+ChatWindowRootView (glass background, debug overlay)
+  └─ ChatContentRootView (@ObservedObject model: ChatContentModel)
+       ├─ HStack
+       │   ├─ SidebarLayer (ChatSidebarRootView, fixed width, divider)
+       │   └─ ChatConversationPaneView
+       │        ├─ ChatPanelToolbarView (drag, app icon, sidebar toggle, new chat, collapse)
+       │        └─ ChatConversationBodyView
+       │             ├─ contentArea (empty / loading / MessageListView)
+       │             ├─ ChatAskUserCard (conditional)
+       │             ├─ AppMessageQueueView (conditional)
+       │             └─ ChatInputRootView
+       ├─ Drop target overlay (isDropTargeted)
+       └─ AttachmentPreviewPopover (modal overlay)
+```
+
+### 1.2 React 迁移
+
+- Root layout：`flex` 横向，sidebar + 主内容区。
+- Sidebar 固定宽度 `IslandSize.ChatPanel.sidebarWidth`（约 220px）；`ChatWindowLayoutModel.resolvedSidebarWidth` 控制展开/折叠与动画（Swift：`withAnimation(.easeInOut(duration: 0.22))`）；React 用 CSS transition。
+
+---
+
+## 二、Sidebar（侧边栏）
+
+源码：`packages/paperboy/Paperboy/Views/Chat/ChatSidebarHost.swift`
+
+### 2.1 数据模型
+
+- `ChatSidebarHost`：`sessions`、`activeSessionId`、`hasMore`、`isLoadingMore`、`isLoading`、`searchQuery`、`sections`、`renamingSessionId`、`renameDraftTitle` 等。
+
+### 2.2 数据获取
+
+- Host 不直接请求网络；由上层 `setSessions` 注入。React：oRPC `session.list` + TanStack Query；分页：`useInfiniteQuery` 或 cursor。
+
+### 2.3 TimeBucket 分组
+
+Today / Yesterday / This Week / This Month / Older；`activeSessionId == nil && !isSearching` 时在 Today 插入「New chat」占位行。React：`useMemo` 重建 sections。
+
+### 2.4 搜索
+
+本地过滤 `searchableText`；`sanitizeSystemContextPrefix` 剥离 `<system_context>...</system_context>`。
+
+### 2.5 SessionRow 交互
+
+选择、右键菜单（Rename / Archive / Open in New Window 等）、悬停时间与 `...` 菜单、内联重命名、轻量 Markdown 标题、滚动清除 hover、底部 sentinel 触发 load more。
+
+### 2.6 视觉
+
+`NSVisualEffectView` sidebar material → Web 用 `backdrop-filter` 或半透明纯色近似。
+
+### 2.7 Footer
+
+Settings 行 → PostBox 打开设置窗口或 SPA 内路由。
+
+---
+
+## 三、Chat 消息列表（Message List）
+
+源码：`MessageListView.swift`、`ChatMessageListState.swift`、`MessageListHost.swift`
+
+### 3.1 ChatRowModel
+
+`id`、`messageId`、`role`、`kind`、`layoutHints`、`layoutKey`、`contentVersion`、`displayPayloadKey`。
+
+### 3.2 ChatRowKind 对照表
+
+| Kind                 | SwiftUI             | React                 |
+| -------------------- | ------------------- | --------------------- |
+| dateSeparator        | 横线 + 日期         | `<DateSeparator>`     |
+| userText             | 右对齐气泡          | `<UserBubble>`        |
+| assistantMarkdown    | MarkdownView        | streamdown + Shiki    |
+| image(Data)          | ChatImageRow        | `<img>`               |
+| lazyImage            | getBlob             | oRPC blob + lazy load |
+| document             | ChatDocumentRow     | `<DocumentCard>`      |
+| attachmentGroup      | AttachmentGroupView | `<AttachmentGroup>`   |
+| toolGroup            | ToolCallGroupView   | `<ToolCallGroup>`     |
+| subagentCard         | SubagentCardView    | `<SubagentCard>`      |
+| streamingStatus      | shimmer             | CSS shimmer           |
+| compactingStatus     | 文案                | `<StatusText>`        |
+| compactedMarker      | 横线文案            | `<CompactedMarker>`   |
+| toolUse / toolResult | EmptyView           | 跳过                  |
+
+### 3.3 间距策略
+
+`ChatTranscriptSpacingPolicy`：角色切换大/小间距、同角色 `xs`、toolGroup→markdown `xs`；`topPaddingByRowId` → CSS margin/gap。
+
+### 3.4 虚拟列表 / 性能
+
+SwiftUI **不用** `LazyVStack`（与 NSHostingView 反馈循环）；用 `VStack` 全量布局 + 观测隔离、固定内容宽、增量 padding、CodeBlock VM 复用。React：**virtua** 虚拟列表。
+
+### 3.5 Scroll to Bottom 逻辑
+
+状态：`isNearBottom`、`followStreamingOutput`、`sessionOpenAutoFollow`、`nearTopPrefetchArmed`。协调器：`pendingScroll`、容差 20px、prefetch 顶部 240px。
+
+规则摘要：新消息且贴底则跟随；streaming 且 `followStreamingOutput` 则滚底；用户上滑 → `userDidScrollAway` 停止跟随；回底恢复；换 session 自动跟随（可取消）；历史 prepend **不**打断视口；planning/status 按 `shouldAutoScrollForLatestChange` 处理。
+
+Near-bottom：macOS 15+ `onScrollGeometryChange`；旧版 bottom sentinel。React：virtua `onScroll` / `IntersectionObserver` + Zustand 存 `followStreamingOutput`。
+
+### 3.6 向上加载历史
+
+Top sentinel → 触发后 disarm，滚远后 rearm；`isPurePrepend` 时保持滚动位置。React：virtua + scroll restore。
+
+### 3.7 Markdown / 代码块
+
+`AssistantMarkdownContent`、`AssistantRenderPackage`、`ChatMarkdownWidthClass`、`CachedAssistantMarkdownRenderer`；代码块 `CodeBlockView` / `DiffCodeBlockView` / `PBCodeBlockHostingView` → streamdown + Shiki + diff 组件。
+
+---
+
+## 四、Chat Input（输入框）
+
+源码：`ChatInputRootView.swift`、`ChatInputModel.swift`
+
+### 4.1 模型要点
+
+`text`、`attachments`、`presentation`、`editMode`（含 queue 编辑）、`voiceState`、`manualEditorHeight` 等。
+
+### 4.2 TextEditor
+
+自适应高度（CTFont 测量、最多 10 行、行高 18）；顶部拖拽改高（最大 360）。React：textarea auto-resize（参考 Manus）。
+
+### 4.3 快捷键
+
+Return 发送、Shift+Return 换行、Escape 取消录音、粘贴文件/图片、Control+Paste。React：`onKeyDown`。
+
+### 4.4 主按钮状态机
+
+队列编辑 / 录音中 Stop（pulse）/ 转写中 / 生成中 Stop / 可发送 Send / 空且可用 Mic / 默认禁用 Send。
+
+### 4.5 附件
+
+`NSOpenPanel`、类型白名单、数量与总大小校验、去重、`AttachmentPreviewStrip`、drop。React：file input + paste + drag；上传走 oRPC `file.upload`。
+
+### 4.6 语音
+
+Push-to-talk 状态机 → PostBox 或 Web Audio。
+
+### 4.7 Message Queue
+
+`AppMessageQueueView` + `MessageQueueStore`：折叠、编辑/立即发送/删除、最高 240px 滚动。React：Zustand + `<MessageQueue>`。
+
+---
+
+## 五、Tool Call UI
+
+源码：`ToolBlock/ToolCallGroupView.swift`、`ToolCallExpandedContent.swift`
+
+- 单步直显；多步「N steps」折叠；待审批 / Running Thinking 自动展开；单步 accordion。
+- Step 标题：`ToolCallTitlePresentation`（Bash、文件、Task、WebFetch、MCP 等）。
+- 展开区：Edit/Write diff、Bash code block、WebFetch markdown、Glob/Grep 列表、LoadSkill、Thinking streaming、MCP JSON、strip 结果懒加载 `getToolResult`。
+- 审批：`ToolPermissionRequestView`、`ToolApprovalCardView`、`ToolApprovalEditorView`。
+
+---
+
+## 六、Subagent Card
+
+`SubagentCardView.swift`：`SubagentCardData`、普通时间线 vs 后台 CUA 截图卡；`applySubagentProgress` 实时更新。
+
+---
+
+## 七、Toolbar
+
+`ChatPanelToolbarView`：高度、`ChatToolbarAppIcon`、sidebar / new / collapse、最窄 160px 隐藏控件、拖拽区、（macOS 26）Glass slider（Web 可不迁）。
+
+---
+
+## 八、Empty State
+
+`ChatEmptyStateContentView`：点击聚焦输入。
+
+---
+
+## 九、Ask User Card
+
+`ChatAskUserCard` + `NotificationIslandContentView`，在列表与输入之间。
+
+---
+
+## 十、Attachment Preview
+
+`AttachmentPreviewPopover`：遮罩、响应式面板、前后翻页。
+
+---
+
+## 十一、Settings（设置）
+
+`SettingsView.swift`：Account、General、Permissions、Privacy、Shortcuts、Connectors、Bridges、External MCP、（DEBUG）Support；600×500；`.sidebarAdaptable`。React：Tab + 表单（Phase 2C）。
+
+---
+
+## 十二、设计系统（Design System Tokens）
+
+PBColors / PBTypography / PBSpacing / PBRadius / Shimmer → CSS 变量或 Tailwind。Glass / sidebar material / thin scrollbar / 指针 / 窗口拖拽 → `backdrop-filter`、`scrollbar-width`、`-webkit-app-region: drag` 等 Web 近似方案。
+
+---
+
+## 十三、状态管理迁移对照
+
+| Swift                 | React                       |
+| --------------------- | --------------------------- |
+| ChatContentModel      | Zustand                     |
+| ChatSidebarHost       | Query + slice               |
+| ChatInputModel        | Zustand                     |
+| MessageQueueStore     | Zustand                     |
+| ChatMessageListState  | Zustand                     |
+| ChatScrollCoordinator | ref + 命令式 scroll         |
+| MessageListHost       | hook                        |
+| @FocusState           | useRef + focus              |
+| @AppStorage           | localStorage / settings API |
+| @EnvironmentObject    | Context                     |
+
+---
+
+## 十四、原生桥接必须项（PostBox 调用清单）
+
+窗口（新开/关闭/最小化/拖拽）、文件选择器、粘贴板、打开设置、通知、权限查询、主题/OAuth/拖放事件、业务快捷键路由等——按 [通信协议](./communication-protocol_zh-CN.md) 与 PostBox 路由表实现。
+
+---
+
+## 十五、不迁移（保留 Swift）
+
+Dynamic Island、Login、Subscription、Onboarding、MenuBarExtra、`PaperboyApp` 场景、`AppDelegate`、`ChatWindow` 容器、DEBUG Computer Use 等。
+
+---
+
+## 十六、建议执行顺序（细化）
+
+1. **2A-1** Message List 基础：全 Row 类型、间距、streamdown+Shiki、virtua。
+2. **2A-2** Scroll：贴底检测、自动滚动、用户打断、历史 prefetch、换 session。
+3. **2A-3** Input：textarea、快捷键、主按钮状态机、附件、语音桥。
+4. **2A-4** Tool UI：分组、各工具展开、三种审批、strip 懒取。
+5. **2A-5** Queue、Subagent、AskUser、附件预览、空/加载态。
+6. **2B** Sidebar + Project（含拖拽）。
+7. **2C** Settings。
+8. **2D** Workspace / Inkwell 合并。
+
+---
+
+## 执行跟踪（在 Paperboy React 仓库勾选）
+
+在实现 PR 中逐项勾选；本表与 Phase 2 验收 checklist 对齐。
+
+- [ ] Sidebar：TimeBucket、搜索、SessionRow、内联重命名、load more、右键菜单
+- [ ] Message List：14 种 Row、SpacingPolicy、virtua
+- [ ] Scroll：near-bottom、auto-scroll、userDidScrollAway、history prefetch、session 打开滚底
+- [ ] Input：auto-resize、快捷键、主按钮状态机、附件、语音
+- [ ] Tool Call UI：accordion、各工具展开、三种审批
+- [ ] 其他：SubagentCard、MessageQueue、AskUser、AttachmentPreview、EmptyState
+- [ ] 设计 Token：PB\* → CSS
+- [ ] PostBox：窗口、picker、pasteboard、事件
+- [ ] Settings：8 个 Tab CRUD

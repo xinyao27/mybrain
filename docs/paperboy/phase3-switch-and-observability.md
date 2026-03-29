@@ -3,7 +3,7 @@
 > Created: 2026-03-28
 > Author: Xinyao Chen
 > Status: Draft
-> Prerequisites: [Phase 2 Core UI Rebuild](./phase2-core-ui-rebuild_zh-CN.md) completed
+> Prerequisites: [Phase 2 Core UI Rebuild](./phase2-core-ui-rebuild.md) completed
 > Related documents:
 >
 > - [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
