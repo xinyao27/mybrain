@@ -326,18 +326,18 @@ Traditional error monitoring platforms (Sentry / Datadog) can only see data from
    - Dashboard display: Error Stack → source line → `git blame` → specific commit + author
 4. **Existing code reuse**:
    - `ohbug/packages/ohbug-browser/src/capture/` — Complete error capture pipeline
-   - `ohbug/packages/ohbug-browser/src/handle/` — Categorized handlers (uncaught/fetch/ajax/websocket/resource/unknown)
-   - `ohbug-dashboard/packages/web/components/event-detail-stack.tsx` — Stack display component
-   - `ohbug-dashboard/packages/web/components/stack-info.tsx` — Stack info parsing component
+   - `ohbug/packages/ohbug-browser/src/handle/` — Categorized handlers (uncaught/unhandledrejection/fetch/ajax/websocket/resource/unknown)
+   - `ohbug-dashboard/apps/web/src/server/procedures/event.ts` — Server-side source map resolution via `source-map-trace`
+   - `ohbug-dashboard/apps/web/src/routes/_authed/$projectId/issues/$issueId.tsx` — Issue detail + stack display
 
 ##### Session Replay
 
 **Implementation:**
 
-1. **Recording**: Integrate rrweb (ohbug-dashboard already has the `issue-related-rrweb.tsx` component)
+1. **Recording**: Use `@ohbug/extension-rrweb` (already exists in ohbug SDK monorepo) to integrate rrweb session recording
 2. **Storage**: rrweb recording data associated with ohbug events, stored in backend
 3. **Playback**: Embed rrweb player in the Observability panel, with support for jumping to the moment of the error
-4. **Existing code reuse**: `ohbug-dashboard/packages/web/components/issue-related-rrweb.tsx`
+4. **Note**: The rrweb player UI has not yet been rebuilt on the new ohbug-dashboard stack (Vite + TanStack Start) — needs to be implemented
 
 ##### Automated Error Scene Reproduction (Automatically Build Reproducible Environment)
 
@@ -356,7 +356,7 @@ Traditional error monitoring platforms (Sentry / Datadog) can only see data from
 
 - Error Stack tracking
 - Session Replay playback
-- Error trend charts (reuse `ohbug-dashboard/packages/web/components/charts/`)
+- Error trend charts (ohbug-dashboard charts not yet fully rebuilt on new stack — needs implementation)
 - Issue list + details
 - Metrics panel
 - Alert configuration
@@ -382,7 +382,7 @@ Traditional error monitoring platforms (Sentry / Datadog) can only see data from
 1. `kly` indexes the Paperboy codebase, building a **dependency graph** (file-level dependency relationships)
 2. When ohbug captures an error in a file → query the dependency graph via kly → mark all dependent/depended-upon files as "risk zones"
 3. Display a "risk heatmap" in the Observability panel (Mermaid / visualization)
-4. **PR-level prediction**: MiniChen, when reviewing PRs, queries the dependency graph of changed files via kly MCP, automatically annotating potentially affected modules
+4. **PR-level prediction**: MiniChen, when reviewing PRs, queries the dependency graph of changed files via kly library API (`getDependents` / `getDependencies`), automatically annotating potentially affected modules
 5. **Historical pattern recognition**: Based on ohbug historical data, identify "high-frequency error modules" and "cascading failure paths"
 
 #### 4.2.4 Automation
@@ -667,6 +667,10 @@ This raises several UX-level questions:
 
 ### 5.1 ohbug (SDK monorepo) → Observability Foundation
 
+> ohbug has been migrated to **Vite+** build tooling (`vp` commands). The monorepo uses pnpm workspaces.
+
+**Core packages:**
+
 | Package          | Purpose                                                      | Reuse Method       |
 | ---------------- | ------------------------------------------------------------ | ------------------ |
 | `@ohbug/core`    | Error event management, extension system, reporting pipeline | Direct npm install |
@@ -675,35 +679,81 @@ This raises several UX-level questions:
 | `@ohbug/types`   | Shared type definitions                                      | Direct npm install |
 | `@ohbug/utils`   | Utility functions                                            | Direct npm install |
 
+**Extension packages (already exist):**
+
+| Package                       | Purpose                             | Reuse Method       |
+| ----------------------------- | ----------------------------------- | ------------------ |
+| `@ohbug/extension-rrweb`      | rrweb session recording integration | Direct npm install |
+| `@ohbug/extension-web-vitals` | Web Vitals performance metrics      | Direct npm install |
+| `@ohbug/extension-uuid`       | Unique user/session identification  | Direct npm install |
+| `@ohbug/extension-view`       | Page view tracking                  | Direct npm install |
+| `@ohbug/extension-feedback`   | User feedback collection            | Direct npm install |
+
+**Other packages:**
+
+| Package           | Purpose                                |
+| ----------------- | -------------------------------------- |
+| `@ohbug/cli`      | CLI tooling                            |
+| `@ohbug/unplugin` | Build plugin (source map upload, etc.) |
+| `@ohbug/vue`      | Vue 3 integration                      |
+| `@ohbug/angular`  | Angular integration                    |
+
 **Needs to be added:**
 
 - `@ohbug/webview` — WebView bridge error capture plugin (Swift↔WebView communication errors, bridge timeouts)
-- rrweb integration package (extracted from ohbug-dashboard)
 
 ### 5.2 ohbug-dashboard → Observability Panel Components
 
-| Module                               | Content                         | Reuse Method                                  |
-| ------------------------------------ | ------------------------------- | --------------------------------------------- |
-| `components/issue-list.tsx`          | Issue list                      | Migrate to new React SPA                      |
-| `components/issue-detail-tabs.tsx`   | Issue detail tabs               | Migrate to new React SPA                      |
-| `components/issue-related-rrweb.tsx` | Session Replay player           | Migrate to new React SPA                      |
-| `components/event-detail-stack.tsx`  | Error Stack display             | Migrate to new React SPA                      |
-| `components/stack-info.tsx`          | Stack info parsing              | Migrate to new React SPA                      |
-| `components/charts/*`                | Error trend charts, perf charts | Migrate to new React SPA                      |
-| `components/alert-list.tsx`          | Alert management                | Migrate to new React SPA                      |
-| `components/data-table/`             | Data table component            | Migrate to new React SPA                      |
-| `services/*`                         | API request layer               | Rewrite, connect to Santi backend             |
-| `packages/server/`                   | NestJS backend                  | Gradually replace with Santi endpoint or oRPC |
+> **Current state (as of `feature/shadcn` branch):** The dashboard has already migrated from Next.js SSR + NestJS + Prisma to **Vite + TanStack React Start + Nitro** (frontend) + **Hono** (backend) + **Drizzle ORM + PostgreSQL** (database). API layer uses **oRPC**. UI components use **shadcn/ui**.
+
+**Current structure:**
+
+```
+ohbug-dashboard/
+├── apps/
+│   ├── web/              ← Frontend: Vite + TanStack Start + Nitro + oRPC
+│   │   ├── src/
+│   │   │   ├── routes/   ← File-based routes (issue list, detail, alerts, metrics)
+│   │   │   ├── components/ui/   ← shadcn UI components
+│   │   │   ├── server/procedures/  ← oRPC procedures (server-side)
+│   │   │   └── lib/orpc.ts   ← oRPC client setup
+│   │   └── vite.config.ts
+│   │
+│   └── server/           ← Backend: Hono + BullMQ workers
+│       └── src/          ← Ingest, cron, email, source-map upload
+│
+├── packages/
+│   ├── db/               ← Drizzle ORM + PostgreSQL (migrations included)
+│   ├── common/           ← Shared types / helpers
+│   └── config/           ← Shared config
+```
+
+**Module mapping (old → current):**
+
+| Old Path (doc)                       | Current Location                                             | Notes                                      |
+| ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------ |
+| `components/issue-list.tsx`          | `apps/web/src/routes/_authed/$projectId/issues/index.tsx`    | Route-colocated, not standalone component  |
+| `components/issue-detail-tabs.tsx`   | `apps/web/src/routes/_authed/$projectId/issues/$issueId.tsx` | Single route file                          |
+| `components/issue-related-rrweb.tsx` | Not yet implemented on new stack                             | rrweb player needs to be rebuilt           |
+| `components/event-detail-stack.tsx`  | Inline in `$issueId.tsx` (JSON + source-map-trace)           | Uses `source-map-trace` in oRPC procedure  |
+| `components/stack-info.tsx`          | Handled by `apps/web/src/server/procedures/event.ts`         | Server-side source map resolution via oRPC |
+| `components/charts/*`                | Minimal bar visuals in issue pages                           | Full charts not yet rebuilt                |
+| `components/alert-list.tsx`          | `apps/web/src/routes/_authed/$projectId/alerts/index.tsx`    | Route-colocated                            |
+| `components/data-table/`             | `apps/web/src/components/ui/table.tsx`                       | shadcn table primitive                     |
+| `services/*`                         | `apps/web/src/server/procedures/*` + `lib/orpc.ts`           | Replaced by oRPC procedures                |
+| `packages/server/` (NestJS)          | `apps/server/` (Hono)                                        | Completely rewritten                       |
 
 **Migration path:**
 
 ```
-现在：  Next.js SSR + NestJS + Prisma/PostgreSQL
+已完成：Next.js SSR + NestJS + Prisma/PostgreSQL
+  ↓
+当前：  Vite + TanStack Start + Hono + Drizzle + oRPC（feature/shadcn 分支）
   ↓
 目标：  Vite+ React SPA（嵌入 Paperboy）+ Santi backend
 ```
 
-The ongoing migration work on the current `feature/shadcn` branch continues, but the goal shifts from "standalone application" to "embeddable component package."
+The `feature/shadcn` branch has completed the tech stack migration. The remaining goal shift is from "standalone application" to "embeddable component package" within Paperboy.
 
 ### 5.3 kly + ohbug — Two Sides of One System
 
@@ -796,16 +846,19 @@ TypeError: Cannot read property 'content' of undefined
                     └──────────────────────────┘
 ```
 
-#### kly Capability Details
+#### kly Capability Details (v0.2)
 
-| Capability                  | Purpose                                                       | Integration Method          |
-| --------------------------- | ------------------------------------------------------------- | --------------------------- |
-| tree-sitter AST parsing     | Precisely understand file structure (imports/exports/symbols) | kly MCP server              |
-| dependency graph            | Risk propagation prediction, PR impact analysis               | kly MCP `graph` command     |
-| FTS5 search + LLM rerank    | MiniChen searches the codebase during PR review               | kly MCP `query` command     |
-| git-aware incremental build | Automatically update index on every commit                    | `kly hook install`          |
-| LLM file metadata           | Semantic descriptions for enriched error reports              | kly MCP `show` command      |
-| MCP server                  | Unified access point for all agents                           | `kly mcp` (stdio transport) |
+> kly v0.2 is **agent-first**: all CLI commands output JSON by default (use `--pretty` for human-readable). MCP support has been removed — kly is now a **library** (direct `import` from `"kly"`) + **CLI tool**.
+
+| Capability                  | Purpose                                                          | Integration Method                                                                      |
+| --------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| tree-sitter AST parsing     | Precisely understand file structure (imports/exports/symbols)    | kly library (`ParserManager`)                                                           |
+| dependency graph + table    | Risk propagation prediction, PR impact analysis                  | kly library (`getDependents` / `getDependencies`) or CLI `kly graph` / `kly dependents` |
+| FTS5 search + LLM rerank    | MiniChen searches the codebase during PR review                  | kly library (`searchFilesWithRerank`) or CLI `kly query --rerank`                       |
+| git-aware incremental build | Automatically update index on every commit                       | `kly hook install`                                                                      |
+| LLM file metadata           | Semantic descriptions for enriched error reports                 | kly library or CLI `kly show`                                                           |
+| `enrichErrorStack`          | Enrich error stack frames with code context + deps + git history | kly library (`enrichErrorStack`) or CLI `kly enrich`                                    |
+| per-file git history        | Causal correlation for recent changes                            | kly library (`getFileHistory`) or CLI `kly history`                                     |
 
 ---
 
@@ -942,7 +995,7 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 - **One-shot switch**: Delete all SwiftUI View code, Swift networking layer, protobuf definitions
 - Swift retains only: window management + permissions + OS collection + subprocess management
 - @ohbug/browser + @ohbug/react integration
-- kly MCP integration
+- kly library integration (direct import, no MCP)
 
 #### Phase 4: Observability Goes Live
 
@@ -1007,8 +1060,8 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 ### A. Related Project Repositories
 
 - `~/work/paperboy` — Paperboy macOS app (Swift/SwiftUI + Santi daemon)
-- `~/work/ohbug` — Error tracking SDK monorepo (already migrated to Vite+)
-- `~/work/ohbug-dashboard` — Error tracking dashboard (`feature/shadcn` branch migration in progress)
+- `~/work/ohbug` — Error tracking SDK monorepo (migrated to Vite+, includes extension-rrweb/web-vitals/uuid/view/feedback)
+- `~/work/ohbug-dashboard` — Error tracking dashboard (`feature/shadcn` branch: migrated to Vite + TanStack Start + Hono + Drizzle + oRPC)
 - `~/work/kly` — Codebase file-level indexing tool (already on Vite+)
 
 ### B. Existing WebView Architecture References
@@ -1024,5 +1077,5 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 | UI Framework       | React            | SwiftUI / Flutter / Vue | Team expertise + best ecosystem + cross-platform ability         |
 | Build Tool         | Vite+ (bun)      | Webpack / Turbopack     | Speed + unified toolchain                                        |
 | Observability      | ohbug (in-house) | Sentry / Datadog        | Full control + existing code + zero cost                         |
-| Code Indexing      | kly (in-house)   | CodeQL / Sourcegraph    | Lightweight + MCP-native + tree-sitter already integrated        |
-| Migration Strategy | Incremental      | Full rewrite            | Controllable risk + each step reversible + product doesn't stall |
+| Code Indexing      | kly (in-house)   | CodeQL / Sourcegraph    | Lightweight + agent-first CLI + direct library API + tree-sitter |
+| Migration Strategy | Full rebuild     | Incremental migration   | No hybrid state + clean break + faster completion                |
