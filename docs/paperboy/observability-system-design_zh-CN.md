@@ -258,17 +258,21 @@ Source Map 上传：
 
 kly（`~/work/kly`）是一个代码仓库文件级索引工具，通过 tree-sitter AST 解析代码结构，用 LLM 生成人类可读的文件元数据，存储在 per-branch SQLite 数据库中。
 
-### 4.1 现有能力
+### 4.1 现有能力（v0.2）
 
-| 能力                 | 状态 | 说明                                                                         |
-| -------------------- | ---- | ---------------------------------------------------------------------------- |
-| Tree-sitter AST 解析 | ✅   | TypeScript / JavaScript / Swift                                              |
-| LLM 文件元数据生成   | ✅   | 文件描述、summary、symbol 描述                                               |
-| Git-aware 增量构建   | ✅   | per-branch SQLite，只重新索引变更文件                                        |
-| FTS5 全文搜索        | ✅   | BM25 排序 + 可选 LLM rerank                                                  |
-| Dependency graph     | ✅   | 文件级，基于相对路径 import 解析                                             |
-| MCP Server           | ✅   | 3 个 tool：`search_files`、`get_file_index`、`get_overview`                  |
-| CLI                  | ✅   | 9 个命令：`init`/`build`/`query`/`show`/`overview`/`graph`/`mcp`/`hook`/`gc` |
+> kly v0.2 是 **agent-first** 设计：所有 CLI 命令默认输出 JSON（`--pretty` 可切换人类可读格式）。MCP 支持已移除 — kly 现在是**库**（直接 `import from "kly"`）+ **CLI 工具**。
+
+| 能力                      | 状态 | 说明                                                                                                    |
+| ------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
+| Tree-sitter AST 解析      | ✅   | TypeScript / JavaScript / Swift                                                                         |
+| LLM 文件元数据生成        | ✅   | 文件描述、summary、symbol 描述                                                                          |
+| Git-aware 增量构建        | ✅   | per-branch SQLite，只重新索引变更文件                                                                   |
+| FTS5 全文搜索             | ✅   | BM25 排序 + 可选 LLM rerank                                                                             |
+| dependency graph + 依赖表 | ✅   | 文件级 `dependencies` 表，`from_path`/`to_path`，已建索引支持快速反向查询                               |
+| `getDependents()`         | ✅   | 查询所有 import 了指定文件的文件（反向依赖）                                                            |
+| `getFileHistory()`        | ✅   | 查询指定文件的 git commit 历史                                                                          |
+| `enrichErrorStack()`      | ✅   | 用代码上下文 + 依赖 + git 历史丰富 error stack                                                          |
+| CLI                       | ✅   | 11 个命令：`init`/`build`/`query`/`show`/`overview`/`graph`/`dependents`/`history`/`enrich`/`hook`/`gc` |
 
 ### 4.2 核心类型定义
 
@@ -419,25 +423,16 @@ export function enrichErrorStack(
   └── 4. 组装 EnrichedErrorStack 返回
 ```
 
-### 5.4 kly 需要新增的 API
+### 5.4 kly 使用的 API（已在 v0.2 中实现）
+
+> 以下所有 API 已在 kly v0.2 中实现并导出。enrichment 管线不需要额外的 kly 开发工作。
 
 **`getDependents()` — 反向依赖查询：**
 
 ```typescript
 export function getDependents(db: IndexDatabase, filePath: string): string[] {
-  const allFiles = db.getAllFiles();
-  const indexedPaths = new Set(allFiles.map((f) => f.path));
-  const dependents: string[] = [];
-
-  for (const file of allFiles) {
-    for (const imp of file.imports) {
-      const resolved = resolveImport(file.path, imp, indexedPaths);
-      if (resolved === filePath) {
-        dependents.push(file.path);
-      }
-    }
-  }
-  return dependents;
+  // 使用 `dependencies` 表进行快速索引查找
+  // SELECT from_path FROM dependencies WHERE to_path = ?
 }
 ```
 
@@ -452,23 +447,10 @@ interface GitCommit {
   message: string;
 }
 
-export function getFileHistory(root: string, filePath: string, limit = 5): GitCommit[] {
-  const result = execSync(
-    `git log --follow -n ${limit} --format='%H|%an|%ae|%at|%s' -- ${filePath}`,
-    { cwd: root, encoding: "utf-8" },
-  );
-  return result
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [hash, author, email, date, ...messageParts] = line.split("|");
-      return { hash, author, email, date: parseInt(date, 10), message: messageParts.join("|") };
-    });
-}
+export function getFileHistory(root: string, filePath: string, limit?: number): GitCommit[];
 ```
 
-**性能优化 — `dependencies` 表：**
+**`dependencies` 表（索引构建时自动写入）：**
 
 ```sql
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -481,19 +463,13 @@ CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_path);
 -- 反向查询：SELECT from_path FROM dependencies WHERE to_path = ?
 ```
 
-### 5.5 新增 MCP 工具
+**CLI 等效命令：**
 
-```typescript
-// 现有 tools（保持不变）
-"search_files"; // FTS5 搜索
-"get_file_index"; // 单文件详情
-"get_overview"; // 仓库概览
-
-// 新增 tools
-"get_dependency_graph"; // file + depth → 依赖图 (JSON/Mermaid)
-"get_dependents"; // file → 所有 import 了它的文件
-"get_file_history"; // file + limit → git 修改历史
-"enrich_error_stack"; // error stack → enriched 上下文
+```bash
+kly dependents <path>     # 查询反向依赖
+kly history <path>        # 查询文件 git 历史
+kly enrich --frames '...' # 丰富 error stack frames（JSON 输入/输出）
+kly graph --focus <path>  # 指定文件的依赖图
 ```
 
 ---
@@ -558,15 +534,15 @@ Santi 直接 import kly 库函数  ←  主要方式（零协议开销）
      │
      │  同时
      │
-kly MCP server (stdio)  ←  给 Claude Code / Codex / MiniChen 用
+kly CLI（JSON 输出）  ←  给 CI、脚本和 agent 工具使用
 ```
 
-选择直接 import 而非 MCP/HTTP 的理由：
+选择直接 import 的理由：
 
 - kly 已经是一个导出干净的 TypeScript 库
 - Santi 和 kly 都是 TypeScript，类型自然共享
 - 不需要多跑一个进程，不需要协议开销
-- MCP 模式保留给外部 agent 使用
+- kly v0.2 CLI 默认输出 JSON，任何 agent 都可通过 shell 调用
 
 ---
 
@@ -698,7 +674,7 @@ Observability 面板是 Paperboy React SPA 内嵌的一个 tab，结合了 ohbug
 | 高依赖模块出错             | 自动提升优先级，通知负责的开发者                                        |
 | Slack #bugs 消息           | 统一入口 → 关联 ohbug 事件 → 自动分配                                   |
 | Linear / GitHub issue      | Webhook → Santi API → 关联 ohbug issue                                  |
-| PR 提交（MiniChen review） | kly MCP 查询变更文件 → 依赖图 → 标注受影响模块                          |
+| PR 提交（MiniChen review） | kly 库 API 查询变更文件 → 依赖图 → 标注受影响模块                       |
 
 ---
 
@@ -706,14 +682,16 @@ Observability 面板是 Paperboy React SPA 内嵌的一个 tab，结合了 ohbug
 
 ### 第一步：kly 核心改造
 
-| 序号 | 任务                                | 优先级 | 工作量                      |
-| ---- | ----------------------------------- | ------ | --------------------------- |
-| 1    | 新增 `getDependents()` API + 导出   | 🔴 高  | 小（~50 行）                |
-| 2    | 新增 `getFileHistory()` API + 导出  | 🔴 高  | 小（~30 行）                |
-| 3    | 新增 `dependencies` 表 + 构建时写入 | 🟡 中  | 中（schema + indexer 修改） |
-| 4    | 新增 `enrichErrorStack()` + 导出    | 🔴 高  | 中（~150 行）               |
-| 5    | MCP 新增 4 个 tool                  | 🟡 中  | 小（包装现有逻辑）          |
-| 6    | 修复 LLM provider 错误处理          | 🟢 低  | 小                          |
+> **状态：大部分已在 kly v0.2 中完成**（commit `b819ff2`，2026-03-28）。
+
+| 序号 | 任务                                | 优先级 | 状态                           |
+| ---- | ----------------------------------- | ------ | ------------------------------ |
+| 1    | 新增 `getDependents()` API + 导出   | 🔴 高  | ✅ v0.2 已完成                 |
+| 2    | 新增 `getFileHistory()` API + 导出  | 🔴 高  | ✅ v0.2 已完成                 |
+| 3    | 新增 `dependencies` 表 + 构建时写入 | 🟡 中  | ✅ v0.2 已完成                 |
+| 4    | 新增 `enrichErrorStack()` + 导出    | 🔴 高  | ✅ v0.2 已完成                 |
+| 5    | ~~MCP 新增 4 个 tool~~              | ~~🟡~~ | ❌ 取消 — MCP 已在 v0.2 中移除 |
+| 6    | 修复 LLM provider 错误处理          | 🟢 低  | 待完成                         |
 
 ### 第二步：ohbug 增强
 
@@ -783,9 +761,9 @@ ohbug-dashboard (组件)
   ├── Issue 列表、详情、图表 → 提取到 Observability 面板
   └── 接收链路 → 迁入 Santi
 
-kly (库)
+kly (库 + CLI)
   ├── 被 Santi import（直接调用库函数）
-  ├── 被 Claude Code / Codex / MiniChen 通过 MCP 调用
+  ├── 被 Claude Code / Codex / MiniChen 通过 CLI 调用（JSON 输出）
   └── 被 CI 通过 CLI 调用
 
 Santi (后端，编排层)

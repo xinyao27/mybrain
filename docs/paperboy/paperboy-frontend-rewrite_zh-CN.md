@@ -307,18 +307,18 @@ Bridge 只处理**系统级操作**，所有**数据密集型通信**走云端 A
    - dashboard 展示时，Error Stack → 源码行 → `git blame` → 具体 commit + 作者
 4. **现有代码复用**：
    - `ohbug/packages/ohbug-browser/src/capture/` — 完整的错误捕获 pipeline
-   - `ohbug/packages/ohbug-browser/src/handle/` — 分类处理器（uncaught/fetch/ajax/websocket/resource/unknown）
-   - `ohbug-dashboard/packages/web/components/event-detail-stack.tsx` — Stack 展示组件
-   - `ohbug-dashboard/packages/web/components/stack-info.tsx` — Stack 信息解析组件
+   - `ohbug/packages/ohbug-browser/src/handle/` — 分类处理器（uncaught/unhandledrejection/fetch/ajax/websocket/resource/unknown）
+   - `ohbug-dashboard/apps/web/src/server/procedures/event.ts` — 服务端通过 `source-map-trace` 进行 source map 反解
+   - `ohbug-dashboard/apps/web/src/routes/_authed/$projectId/issues/$issueId.tsx` — Issue 详情 + Stack 展示
 
 ##### Session Replay
 
 **实现：**
 
-1. **录制**：集成 rrweb（ohbug-dashboard 已有 `issue-related-rrweb.tsx` 组件）
+1. **录制**：使用 `@ohbug/extension-rrweb`（已存在于 ohbug SDK monorepo 中）集成 rrweb session 录制
 2. **存储**：rrweb 录制数据关联到 ohbug event，存入后端
 3. **回放**：在 Observability 面板中嵌入 rrweb player，支持定位到报错时刻
-4. **现有代码复用**：`ohbug-dashboard/packages/web/components/issue-related-rrweb.tsx`
+4. **注意**：rrweb 播放器 UI 尚未在新版 ohbug-dashboard 技术栈（Vite + TanStack Start）上重建，需要实现
 
 ##### 自动化复原错误场景（自动搭建可复原环境）
 
@@ -337,7 +337,7 @@ Bridge 只处理**系统级操作**，所有**数据密集型通信**走云端 A
 
 - Error Stack 追踪
 - Session Replay 回放
-- 错误趋势图（复用 `ohbug-dashboard/packages/web/components/charts/`）
+- 错误趋势图（ohbug-dashboard 图表尚未在新技术栈上完全重建，需要实现）
 - Issue 列表 + 详情
 - Metrics 面板
 - Alert 配置
@@ -363,7 +363,7 @@ Bridge 只处理**系统级操作**，所有**数据密集型通信**走云端 A
 1. `kly` 索引 Paperboy 代码仓库，构建 **dependency graph**（文件级依赖关系）
 2. 当 ohbug 捕获某个文件的报错 → 通过 kly 查询 dependency graph → 标记所有依赖/被依赖的文件为「风险区域」
 3. 在 Observability 面板展示「风险热力图」（Mermaid / 可视化）
-4. **PR 级预测**：MiniChen 在 review PR 时，通过 kly MCP 查询变更文件的依赖图，自动标注可能受影响的模块
+4. **PR 级预测**：MiniChen 在 review PR 时，通过 kly 库 API（`getDependents` / `getDependencies`）查询变更文件的依赖图，自动标注可能受影响的模块
 5. **历史模式识别**：基于 ohbug 历史数据，识别"高频出错模块"和"级联故障路径"
 
 #### 4.2.4 自动化
@@ -648,6 +648,10 @@ WebView 处理（业务级，React 内部路由）：
 
 ### 5.1 ohbug（SDK monorepo）→ 可观测性基座
 
+> ohbug 已迁移至 **Vite+** 构建工具链（`vp` 命令）。monorepo 使用 pnpm workspaces。
+
+**核心包：**
+
 | Package          | 用途                                    | 复用方式         |
 | ---------------- | --------------------------------------- | ---------------- |
 | `@ohbug/core`    | 错误事件管理、扩展系统、上报 pipeline   | 直接 npm install |
@@ -656,35 +660,81 @@ WebView 处理（业务级，React 内部路由）：
 | `@ohbug/types`   | 共享类型定义                            | 直接 npm install |
 | `@ohbug/utils`   | 工具函数                                | 直接 npm install |
 
+**扩展包（已存在）：**
+
+| Package                       | 用途                   | 复用方式         |
+| ----------------------------- | ---------------------- | ---------------- |
+| `@ohbug/extension-rrweb`      | rrweb session 录制集成 | 直接 npm install |
+| `@ohbug/extension-web-vitals` | Web Vitals 性能指标    | 直接 npm install |
+| `@ohbug/extension-uuid`       | 唯一用户/会话标识      | 直接 npm install |
+| `@ohbug/extension-view`       | 页面浏览追踪           | 直接 npm install |
+| `@ohbug/extension-feedback`   | 用户反馈收集           | 直接 npm install |
+
+**其他包：**
+
+| Package           | 用途                          |
+| ----------------- | ----------------------------- |
+| `@ohbug/cli`      | CLI 工具                      |
+| `@ohbug/unplugin` | 构建插件（source map 上传等） |
+| `@ohbug/vue`      | Vue 3 集成                    |
+| `@ohbug/angular`  | Angular 集成                  |
+
 **需要新增：**
 
 - `@ohbug/webview` — WebView bridge 错误捕获插件（Swift↔WebView 通信错误、bridge 超时）
-- rrweb 集成 package（从 ohbug-dashboard 提取）
 
 ### 5.2 ohbug-dashboard → 可观测性面板组件
 
-| 模块                                 | 内容                  | 复用方式                          |
-| ------------------------------------ | --------------------- | --------------------------------- |
-| `components/issue-list.tsx`          | Issue 列表            | 迁移到新 React SPA                |
-| `components/issue-detail-tabs.tsx`   | Issue 详情 tabs       | 迁移到新 React SPA                |
-| `components/issue-related-rrweb.tsx` | Session Replay 播放器 | 迁移到新 React SPA                |
-| `components/event-detail-stack.tsx`  | Error Stack 展示      | 迁移到新 React SPA                |
-| `components/stack-info.tsx`          | Stack 信息解析        | 迁移到新 React SPA                |
-| `components/charts/*`                | 错误趋势图、性能图    | 迁移到新 React SPA                |
-| `components/alert-list.tsx`          | Alert 管理            | 迁移到新 React SPA                |
-| `components/data-table/`             | 数据表格组件          | 迁移到新 React SPA                |
-| `services/*`                         | API 请求层            | 重写，对接 Santi backend          |
-| `packages/server/`                   | NestJS 后端           | 逐步替换为 Santi endpoint 或 oRPC |
+> **当前状态（`feature/shadcn` 分支）：** Dashboard 已从 Next.js SSR + NestJS + Prisma 迁移到 **Vite + TanStack React Start + Nitro**（前端）+ **Hono**（后端）+ **Drizzle ORM + PostgreSQL**（数据库）。API 层使用 **oRPC**。UI 组件使用 **shadcn/ui**。
+
+**当前结构：**
+
+```
+ohbug-dashboard/
+├── apps/
+│   ├── web/              ← 前端：Vite + TanStack Start + Nitro + oRPC
+│   │   ├── src/
+│   │   │   ├── routes/   ← 基于文件的路由（issue 列表、详情、alerts、metrics）
+│   │   │   ├── components/ui/   ← shadcn UI 组件
+│   │   │   ├── server/procedures/  ← oRPC procedures（服务端）
+│   │   │   └── lib/orpc.ts   ← oRPC 客户端配置
+│   │   └── vite.config.ts
+│   │
+│   └── server/           ← 后端：Hono + BullMQ workers
+│       └── src/          ← 数据接收、定时任务、邮件、source-map 上传
+│
+├── packages/
+│   ├── db/               ← Drizzle ORM + PostgreSQL（含 migrations）
+│   ├── common/           ← 共享类型 / 工具
+│   └── config/           ← 共享配置
+```
+
+**模块映射（旧 → 新）：**
+
+| 旧路径（文档）                       | 当前位置                                                     | 备注                                        |
+| ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------- |
+| `components/issue-list.tsx`          | `apps/web/src/routes/_authed/$projectId/issues/index.tsx`    | 与路由共置，非独立组件                      |
+| `components/issue-detail-tabs.tsx`   | `apps/web/src/routes/_authed/$projectId/issues/$issueId.tsx` | 单一路由文件                                |
+| `components/issue-related-rrweb.tsx` | 新技术栈上尚未实现                                           | rrweb 播放器需要重建                        |
+| `components/event-detail-stack.tsx`  | 内联在 `$issueId.tsx`（JSON + source-map-trace）             | 在 oRPC procedure 中使用 `source-map-trace` |
+| `components/stack-info.tsx`          | 由 `apps/web/src/server/procedures/event.ts` 处理            | 服务端通过 oRPC 进行 source map 反解        |
+| `components/charts/*`                | issue 页面中的简单柱状可视化                                 | 完整图表尚未重建                            |
+| `components/alert-list.tsx`          | `apps/web/src/routes/_authed/$projectId/alerts/index.tsx`    | 与路由共置                                  |
+| `components/data-table/`             | `apps/web/src/components/ui/table.tsx`                       | shadcn table 基础组件                       |
+| `services/*`                         | `apps/web/src/server/procedures/*` + `lib/orpc.ts`           | 已替换为 oRPC procedures                    |
+| `packages/server/`（NestJS）         | `apps/server/`（Hono）                                       | 已完全重写                                  |
 
 **迁移路径：**
 
 ```
-现在：  Next.js SSR + NestJS + Prisma/PostgreSQL
+已完成：Next.js SSR + NestJS + Prisma/PostgreSQL
+  ↓
+当前：  Vite + TanStack Start + Hono + Drizzle + oRPC（feature/shadcn 分支）
   ↓
 目标：  Vite+ React SPA（嵌入 Paperboy）+ Santi backend
 ```
 
-当前 `feature/shadcn` 分支的迁移工作继续进行，但目标从"独立应用"调整为"可嵌入的组件包"。
+`feature/shadcn` 分支已完成技术栈迁移。剩余的目标调整是从"独立应用"到 Paperboy 内的"可嵌入组件包"。
 
 ### 5.3 kly + ohbug — 一个系统的两面
 
@@ -777,16 +827,19 @@ TypeError: Cannot read property 'content' of undefined
                     └──────────────────────────┘
 ```
 
-#### kly 能力明细
+#### kly 能力明细（v0.2）
 
-| 能力                        | 用途                                        | 接入方式                     |
-| --------------------------- | ------------------------------------------- | ---------------------------- |
-| tree-sitter AST 解析        | 精确了解文件结构（imports/exports/symbols） | kly MCP server               |
-| dependency graph            | 风险传播预测、PR 影响分析                   | kly MCP `graph` 命令         |
-| FTS5 搜索 + LLM rerank      | MiniChen PR review 时搜索代码库             | kly MCP `query` 命令         |
-| git-aware incremental build | 每次 commit 自动更新索引                    | `kly hook install`           |
-| LLM 文件元数据              | enriched error report 的语义化描述          | kly MCP `show` 命令          |
-| MCP server                  | 所有 agent 统一接入                         | `kly mcp`（stdio transport） |
+> kly v0.2 是 **agent-first** 设计：所有 CLI 命令默认输出 JSON（`--pretty` 可切换人类可读格式）。MCP 支持已移除 — kly 现在是**库**（直接 `import from "kly"`）+ **CLI 工具**。
+
+| 能力                        | 用途                                           | 接入方式                                                                           |
+| --------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| tree-sitter AST 解析        | 精确了解文件结构（imports/exports/symbols）    | kly 库（`ParserManager`）                                                          |
+| dependency graph + 依赖表   | 风险传播预测、PR 影响分析                      | kly 库（`getDependents` / `getDependencies`）或 CLI `kly graph` / `kly dependents` |
+| FTS5 搜索 + LLM rerank      | MiniChen PR review 时搜索代码库                | kly 库（`searchFilesWithRerank`）或 CLI `kly query --rerank`                       |
+| git-aware incremental build | 每次 commit 自动更新索引                       | `kly hook install`                                                                 |
+| LLM 文件元数据              | enriched error report 的语义化描述             | kly 库或 CLI `kly show`                                                            |
+| `enrichErrorStack`          | 用代码上下文 + 依赖 + git 历史丰富 error stack | kly 库（`enrichErrorStack`）或 CLI `kly enrich`                                    |
+| 逐文件 git 历史             | 最近改动的因果关联                             | kly 库（`getFileHistory`）或 CLI `kly history`                                     |
 
 ---
 
@@ -923,7 +976,7 @@ dist/
 - **一次性切换**：删除所有 SwiftUI View 代码、Swift 网络层、protobuf 定义
 - Swift 只保留：窗口管理 + 权限 + OS 采集 + 子进程管理
 - @ohbug/browser + @ohbug/react 接入
-- kly MCP 接入
+- kly 库接入（直接 import，无 MCP）
 
 #### Phase 4: 可观测性上线
 
@@ -988,8 +1041,8 @@ dist/
 ### A. 相关项目仓库
 
 - `~/work/paperboy` — Paperboy macOS app（Swift/SwiftUI + Santi daemon）
-- `~/work/ohbug` — 错误追踪 SDK monorepo（已迁移 Vite+）
-- `~/work/ohbug-dashboard` — 错误追踪面板（`feature/shadcn` 分支迁移中）
+- `~/work/ohbug` — 错误追踪 SDK monorepo（已迁移 Vite+，含 extension-rrweb/web-vitals/uuid/view/feedback）
+- `~/work/ohbug-dashboard` — 错误追踪面板（`feature/shadcn` 分支：已迁移至 Vite + TanStack Start + Hono + Drizzle + oRPC）
 - `~/work/kly` — 代码仓库文件级索引工具（已在 Vite+）
 
 ### B. 现有 WebView 架构参考
@@ -1000,10 +1053,10 @@ dist/
 
 ### C. 设计决策记录
 
-| 决策     | 选择          | 替代方案                | 理由                                 |
-| -------- | ------------- | ----------------------- | ------------------------------------ |
-| UI 框架  | React         | SwiftUI / Flutter / Vue | 团队擅长 + 生态最好 + 跨端能力       |
-| 构建工具 | Vite+（bun）  | Webpack / Turbopack     | 速度 + 统一工具链                    |
-| 可观测性 | ohbug（自有） | Sentry / Datadog        | 完全可控 + 已有代码 + 零成本         |
-| 代码索引 | kly（自有）   | CodeQL / Sourcegraph    | 轻量 + MCP 原生 + 已集成 tree-sitter |
-| 迁移策略 | 增量          | 全量重写                | 风险可控 + 每步可回滚 + 产品不停滞   |
+| 决策     | 选择          | 替代方案                | 理由                                              |
+| -------- | ------------- | ----------------------- | ------------------------------------------------- |
+| UI 框架  | React         | SwiftUI / Flutter / Vue | 团队擅长 + 生态最好 + 跨端能力                    |
+| 构建工具 | Vite+（bun）  | Webpack / Turbopack     | 速度 + 统一工具链                                 |
+| 可观测性 | ohbug（自有） | Sentry / Datadog        | 完全可控 + 已有代码 + 零成本                      |
+| 代码索引 | kly（自有）   | CodeQL / Sourcegraph    | 轻量 + agent-first CLI + 直接库 API + tree-sitter |
+| 迁移策略 | 全量重建      | 渐进迁移                | 无混合状态 + 干净切割 + 更快完成                  |
