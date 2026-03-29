@@ -258,17 +258,21 @@ Source Map Upload:
 
 kly (`~/work/kly`) is a file-level code repository indexing tool. It parses code structure via tree-sitter AST, uses LLM to generate human-readable file metadata, and stores everything in per-branch SQLite databases.
 
-### 4.1 Current Capabilities
+### 4.1 Current Capabilities (v0.2)
 
-| Capability                   | Status | Description                                                                    |
-| ---------------------------- | ------ | ------------------------------------------------------------------------------ |
-| Tree-sitter AST parsing      | ✅     | TypeScript / JavaScript / Swift                                                |
-| LLM file metadata generation | ✅     | File description, summary, symbol descriptions                                 |
-| Git-aware incremental build  | ✅     | Per-branch SQLite, only re-indexes changed files                               |
-| FTS5 full-text search        | ✅     | BM25 ranking + optional LLM rerank                                             |
-| Dependency graph             | ✅     | File-level, based on relative path import resolution                           |
-| MCP Server                   | ✅     | 3 tools: `search_files`, `get_file_index`, `get_overview`                      |
-| CLI                          | ✅     | 9 commands: `init`/`build`/`query`/`show`/`overview`/`graph`/`mcp`/`hook`/`gc` |
+> kly v0.2 is **agent-first**: all CLI commands output JSON by default (`--pretty` for human-readable). MCP support has been removed — kly is now a **library** (direct `import` from `"kly"`) + **CLI tool**.
+
+| Capability                   | Status | Description                                                                                               |
+| ---------------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| Tree-sitter AST parsing      | ✅     | TypeScript / JavaScript / Swift                                                                           |
+| LLM file metadata generation | ✅     | File description, summary, symbol descriptions                                                            |
+| Git-aware incremental build  | ✅     | Per-branch SQLite, only re-indexes changed files                                                          |
+| FTS5 full-text search        | ✅     | BM25 ranking + optional LLM rerank                                                                        |
+| Dependency graph + table     | ✅     | File-level `dependencies` table with `from_path`/`to_path`, indexed for fast reverse lookup               |
+| `getDependents()`            | ✅     | Query all files that import a given file (reverse dependencies)                                           |
+| `getFileHistory()`           | ✅     | Query git commit history for a specific file                                                              |
+| `enrichErrorStack()`         | ✅     | Enrich error stack frames with code context, dependencies, and git history                                |
+| CLI                          | ✅     | 11 commands: `init`/`build`/`query`/`show`/`overview`/`graph`/`dependents`/`history`/`enrich`/`hook`/`gc` |
 
 ### 4.2 Core Type Definitions
 
@@ -419,25 +423,16 @@ Input: error stack (string or parsed frames)
   └── 4. Assemble and return EnrichedErrorStack
 ```
 
-### 5.4 New APIs Required in kly
+### 5.4 kly APIs Used (Already Implemented in v0.2)
+
+> All APIs listed below are already implemented and exported in kly v0.2. No additional kly work is needed for the enrichment pipeline.
 
 **`getDependents()` — Reverse dependency query:**
 
 ```typescript
 export function getDependents(db: IndexDatabase, filePath: string): string[] {
-  const allFiles = db.getAllFiles();
-  const indexedPaths = new Set(allFiles.map((f) => f.path));
-  const dependents: string[] = [];
-
-  for (const file of allFiles) {
-    for (const imp of file.imports) {
-      const resolved = resolveImport(file.path, imp, indexedPaths);
-      if (resolved === filePath) {
-        dependents.push(file.path);
-      }
-    }
-  }
-  return dependents;
+  // Uses the `dependencies` table for fast indexed lookup
+  // SELECT from_path FROM dependencies WHERE to_path = ?
 }
 ```
 
@@ -452,23 +447,10 @@ interface GitCommit {
   message: string;
 }
 
-export function getFileHistory(root: string, filePath: string, limit = 5): GitCommit[] {
-  const result = execSync(
-    `git log --follow -n ${limit} --format='%H|%an|%ae|%at|%s' -- ${filePath}`,
-    { cwd: root, encoding: "utf-8" },
-  );
-  return result
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [hash, author, email, date, ...messageParts] = line.split("|");
-      return { hash, author, email, date: parseInt(date, 10), message: messageParts.join("|") };
-    });
-}
+export function getFileHistory(root: string, filePath: string, limit?: number): GitCommit[];
 ```
 
-**Performance optimization — `dependencies` table:**
+**`dependencies` table (built during indexing):**
 
 ```sql
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -481,19 +463,13 @@ CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_path);
 -- Reverse query: SELECT from_path FROM dependencies WHERE to_path = ?
 ```
 
-### 5.5 New MCP Tools
+**CLI equivalents:**
 
-```typescript
-// Existing tools (unchanged)
-"search_files"; // FTS5 search
-"get_file_index"; // Single file details
-"get_overview"; // Repository overview
-
-// New tools
-"get_dependency_graph"; // file + depth → dependency graph (JSON/Mermaid)
-"get_dependents"; // file → all files that import it
-"get_file_history"; // file + limit → git modification history
-"enrich_error_stack"; // error stack → enriched context
+```bash
+kly dependents <path>     # query reverse dependencies
+kly history <path>        # query git history for a file
+kly enrich --frames '...' # enrich error stack frames (JSON input/output)
+kly graph --focus <path>  # dependency graph for a file
 ```
 
 ---
@@ -558,15 +534,15 @@ Santi directly imports kly library functions  ←  Primary (zero protocol overhe
      │
      │  simultaneously
      │
-kly MCP server (stdio)  ←  For Claude Code / Codex / MiniChen
+kly CLI (JSON output)  ←  For CI, scripts, and agent tooling
 ```
 
-Rationale for direct import over MCP/HTTP:
+Rationale for direct import:
 
 - kly is already a cleanly exported TypeScript library
 - Both Santi and kly are TypeScript, types are naturally shared
 - No extra process, no protocol overhead
-- MCP mode preserved for external agents
+- kly v0.2 CLI outputs JSON by default, usable by any agent via shell
 
 ---
 
@@ -702,7 +678,7 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 | Error in high-dependency module | Auto-escalate priority, notify responsible developer                                   |
 | Slack #bugs message             | Unified intake → correlate with ohbug events → auto-assign                             |
 | Linear / GitHub issue           | Webhook → Santi API → link to ohbug issue                                              |
-| PR submitted (MiniChen review)  | kly MCP query changed files → dependency graph → flag impacted modules                 |
+| PR submitted (MiniChen review)  | kly library API query changed files → dependency graph → flag impacted modules         |
 
 ---
 
@@ -710,14 +686,16 @@ The Observability panel is an embedded tab in the Paperboy React SPA, combining 
 
 ### Step 1: kly Core Modifications
 
-| #   | Task                                          | Priority | Effort                           |
-| --- | --------------------------------------------- | -------- | -------------------------------- |
-| 1   | Add `getDependents()` API + export            | 🔴 High  | Small (~50 lines)                |
-| 2   | Add `getFileHistory()` API + export           | 🔴 High  | Small (~30 lines)                |
-| 3   | Add `dependencies` table + write during build | 🟡 Med   | Medium (schema + indexer change) |
-| 4   | Add `enrichErrorStack()` + export             | 🔴 High  | Medium (~150 lines)              |
-| 5   | MCP: add 4 new tools                          | 🟡 Med   | Small (wrap existing logic)      |
-| 6   | Fix LLM provider error handling               | 🟢 Low   | Small                            |
+> **Status: Most items completed in kly v0.2** (commit `b819ff2`, 2026-03-28).
+
+| #   | Task                                          | Priority | Status                             |
+| --- | --------------------------------------------- | -------- | ---------------------------------- |
+| 1   | Add `getDependents()` API + export            | 🔴 High  | ✅ Done in v0.2                    |
+| 2   | Add `getFileHistory()` API + export           | 🔴 High  | ✅ Done in v0.2                    |
+| 3   | Add `dependencies` table + write during build | 🟡 Med   | ✅ Done in v0.2                    |
+| 4   | Add `enrichErrorStack()` + export             | 🔴 High  | ✅ Done in v0.2                    |
+| 5   | ~~MCP: add 4 new tools~~                      | ~~🟡~~   | ❌ Cancelled — MCP removed in v0.2 |
+| 6   | Fix LLM provider error handling               | 🟢 Low   | Pending                            |
 
 ### Step 2: ohbug Enhancements
 
@@ -787,9 +765,9 @@ ohbug-dashboard (components)
   ├── Issue list, detail, charts → extracted into Observability panel
   └── Ingestion pipeline → migrated into Santi
 
-kly (library)
+kly (library + CLI)
   ├── Imported by Santi (direct library function calls)
-  ├── Called by Claude Code / Codex / MiniChen via MCP
+  ├── Called by Claude Code / Codex / MiniChen via CLI (JSON output)
   └── Called by CI via CLI
 
 Santi (backend, orchestration)
