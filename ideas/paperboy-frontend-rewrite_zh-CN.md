@@ -3,6 +3,14 @@
 > 创建日期：2026-03-28
 > 作者：Xinyao Chen
 > 状态：草案（Draft）
+>
+> **相关文档：**
+>
+> - [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — 用 oRPC 替换 Protobuf/PostBox 的详细设计
+> - [kly 集成方案](./kly-integration-plan_zh-CN.md) — kly 如何接入 Paperboy 可观测性系统
+> - [Phase 1：端到端验证](./phase1-e2e-verification_zh-CN.md) — Swift → Santi → WebView → React → oRPC 全链路验证
+> - [Phase 2：核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) — Chat、Sidebar、Settings、Workspace 重建细节
+> - [Phase 3：切换 + 清理 + 可观测性](./phase3-switch-and-observability_zh-CN.md) — SwiftUI 删除、Protobuf 清理、ohbug+kly 集成
 
 ## 一、背景与动机
 
@@ -141,6 +149,8 @@ Paperboy 当前的前端是纯 SwiftUI 实现，刚刚完成了从 AppKit 到 Sw
 - 统一入口（Slack + Linear + GitHub + Paperboy bot → 自动处理）
 
 ### 3.3 Bridge 通信协议（PostBox SDK）
+
+> **详细文档：** [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — 涵盖完整的 oRPC router 设计、双适配器架构、chat streaming 实现、Publisher 多窗口同步、Protobuf 到 oRPC 迁移映射表、以及 localhost 安全方案。
 
 Swift ↔ WebView 通信通过 `WKScriptMessageHandler`：
 
@@ -537,6 +547,8 @@ WebView 处理（业务级，React 内部路由）：
 
 ### 5.3 kly + ohbug — 一个系统的两面
 
+> **详细文档：** [kly 集成方案](./kly-integration-plan_zh-CN.md) — 涵盖 kly 现状评估、差距分析、`enrich_error_stack` 详细设计、MCP 工具扩展、Santi 集成代码、以及 CI 集成工作流。
+
 > kly 和 ohbug 是相辅相成的。kly 整理出来的文件级 index 可以和 error stack 相结合。
 
 kly 是**静态视角**（代码结构、依赖关系、文件元数据），ohbug 是**运行时视角**（错误现场、用户行为、session）。Error Stack 是它们的**交汇点** — 一个文件名 + 行号，连接了两个世界。
@@ -650,7 +662,7 @@ TypeError: Cannot read property 'content' of undefined
 
 - **整个应用上所有能看到的东西全部是 WebView** — Sidebar、Chat、Workspace、Settings 全部用 React 写。不会存在"SwiftUI Sidebar + React Chat"的混合状态。
 - **完全删掉现有 SwiftUI 前端** — 不维护两套代码，不服务两个前端。
-- **不再需要 Protobuf** — Santi 直接把最终数据通过 JSON/WebSocket 发给 React WebView。通信协议大幅简化。
+- **不再需要 Protobuf** — Santi 直接把最终数据通过 JSON/WebSocket 发给 React WebView。通信协议大幅简化。详见 [通信协议重新设计](./communication-protocol_zh-CN.md) 中的完整 oRPC 迁移方案。
 - **Swift 只保留系统原生逻辑** — 权限处理、窗口管理、OS 数据采集、启动 Santi 子进程。
 
 **关键架构决策：前端 + Santi 打包为一个 TypeScript 可执行文件，由 Swift 作为子进程启动。**
@@ -741,6 +753,8 @@ dist/
 
 #### Phase 1: 基础设施搭建
 
+> **详细文档：** [Phase 1：端到端验证](./phase1-e2e-verification_zh-CN.md) — 逐步执行计划、双协议共存策略、React SPA 脚手架、streaming 验证、Swift shell 实现、以及完整验证清单。
+
 - 搭建 monorepo 结构（native/ + packages/web + packages/santi + packages/shared）
 - Santi 加入 HTTP static serving + WebSocket endpoint
 - Santi 通信协议从 protobuf 切换到 JSON/WebSocket
@@ -748,6 +762,8 @@ dist/
 - 验证完整链路：Swift 启动 → Santi serve → WebView 加载 → React → API 通信
 
 #### Phase 2: 核心 UI 重建
+
+> **详细文档：** [Phase 2：核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) — Spaces→Project 重新设计、Chat/Sidebar/Settings/Workspace 详细拆解、Santi proto 到 oRPC 迁移表、验收清单、以及风险分析。
 
 **并行重建所有可视化模块**（不存在"先迁哪个"的问题——全部重建，一起上线）：
 
@@ -760,6 +776,8 @@ dist/
 
 #### Phase 3: 切换
 
+> **详细文档：** [Phase 3：切换 + 清理 + 可观测性](./phase3-switch-and-observability_zh-CN.md) — SwiftUI 删除方案、Protobuf 清理文件清单、PostBox 保留原因、ohbug+kly 集成点、测试要求、以及整体时间线。
+
 - 新 React 前端通过验收 checklist
 - **一次性切换**：删除所有 SwiftUI View 代码、Swift 网络层、protobuf 定义
 - Swift 只保留：窗口管理 + 权限 + OS 采集 + 子进程管理
@@ -767,6 +785,8 @@ dist/
 - kly MCP 接入
 
 #### Phase 4: 可观测性上线
+
+> **详细文档：** [Phase 3：切换 + 清理 + 可观测性 §3C–3D](./phase3-switch-and-observability_zh-CN.md) + [kly 集成方案](./kly-integration-plan_zh-CN.md)
 
 - ohbug-dashboard 组件迁入
 - Error Stack → commit/行 + kly enrichment 链路打通

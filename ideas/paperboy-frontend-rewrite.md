@@ -3,6 +3,14 @@
 > Created: 2026-03-28
 > Author: Xinyao Chen
 > Status: Draft
+>
+> **Related Documents:**
+>
+> - [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — Detailed design for replacing Protobuf/PostBox with oRPC
+> - [kly Integration Plan](./kly-integration-plan.md) — How kly integrates into the Paperboy observability system
+> - [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — Swift → Santi → WebView → React → oRPC pipeline validation
+> - [Phase 2: Core UI Rebuild](./phase2-core-ui-rebuild.md) — Chat, Sidebar, Settings, Workspace rebuild details
+> - [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal, Protobuf cleanup, ohbug+kly integration
 
 ## 1. Background & Motivation
 
@@ -160,6 +168,8 @@ This is not a from-scratch gamble. The Inkwell panel (`packages/inkwell/`) is al
 - Unified entry point (Slack + Linear + GitHub + Paperboy bot → automatic processing)
 
 ### 3.3 Bridge Communication Protocol (PostBox SDK)
+
+> **Detailed document:** [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — covers the full oRPC router design, dual adapter architecture, chat streaming implementation, multi-window sync via Publisher, Protobuf-to-oRPC migration mapping, and localhost security.
 
 Swift ↔ WebView communication via `WKScriptMessageHandler`:
 
@@ -556,6 +566,8 @@ The ongoing migration work on the current `feature/shadcn` branch continues, but
 
 ### 5.3 kly + ohbug — Two Sides of One System
 
+> **Detailed document:** [kly Integration Plan](./kly-integration-plan.md) — covers kly's current state assessment, gap analysis, `enrich_error_stack` detailed design, MCP tool extensions, Santi integration code, and CI integration workflow.
+
 > kly and ohbug are complementary. The file-level index that kly organizes can be combined with error stacks.
 
 kly is the **static perspective** (code structure, dependency relationships, file metadata); ohbug is the **runtime perspective** (error scenes, user behavior, sessions). The Error Stack is their **intersection point** — a filename + line number that connects both worlds.
@@ -669,7 +681,7 @@ Core decisions:
 
 - **Everything visible in the entire application is a WebView** — Sidebar, Chat, Workspace, Settings are all written in React. There will be no hybrid state of "SwiftUI Sidebar + React Chat."
 - **Completely delete the existing SwiftUI frontend** — No maintaining two codebases, no serving two frontends.
-- **Protobuf is no longer needed** — Santi directly sends final data to the React WebView via JSON/WebSocket. The communication protocol is drastically simplified.
+- **Protobuf is no longer needed** — Santi directly sends final data to the React WebView via JSON/WebSocket. The communication protocol is drastically simplified. See [Communication Protocol Redesign](./communication-protocol.md) for the full oRPC migration plan.
 - **Swift retains only system-native logic** — Permission handling, window management, OS data collection, launching the Santi subprocess.
 
 **Key architectural decision: The frontend + Santi are packaged as a single TypeScript executable, launched by Swift as a subprocess.**
@@ -760,6 +772,8 @@ dist/
 
 #### Phase 1: Infrastructure Setup
 
+> **Detailed document:** [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — step-by-step execution plan, dual-protocol coexistence strategy, React SPA scaffolding, streaming verification, Swift shell implementation, and the full verification checklist.
+
 - Set up monorepo structure (native/ + packages/web + packages/santi + packages/shared)
 - Add HTTP static serving + WebSocket endpoint to Santi
 - Switch Santi communication protocol from protobuf to JSON/WebSocket
@@ -767,6 +781,8 @@ dist/
 - Verify the full chain: Swift launch → Santi serve → WebView load → React → API communication
 
 #### Phase 2: Core UI Rebuild
+
+> **Detailed document:** [Phase 2: Core UI Rebuild](./phase2-core-ui-rebuild.md) — Spaces→Project redesign, Chat/Sidebar/Settings/Workspace detailed breakdown, Santi proto-to-oRPC migration table, acceptance checklist, and risk analysis.
 
 **Rebuild all visual modules in parallel** (there is no question of "which to migrate first" — rebuild everything, ship together):
 
@@ -779,6 +795,8 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 
 #### Phase 3: The Switch
 
+> **Detailed document:** [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal plan, Protobuf cleanup file list, PostBox retention rationale, ohbug+kly integration points, testing requirements, and overall timeline.
+
 - New React frontend passes the acceptance checklist
 - **One-shot switch**: Delete all SwiftUI View code, Swift networking layer, protobuf definitions
 - Swift retains only: window management + permissions + OS collection + subprocess management
@@ -786,6 +804,8 @@ Note: React streaming chat has been validated by the entire industry (ChatGPT/Cl
 - kly MCP integration
 
 #### Phase 4: Observability Goes Live
+
+> **Detailed documents:** [Phase 3: Switch + Cleanup + Observability §3C–3D](./phase3-switch-and-observability.md) + [kly Integration Plan](./kly-integration-plan.md)
 
 - ohbug-dashboard components migrated in
 - Error Stack → commit/line + kly enrichment pipeline connected end-to-end
