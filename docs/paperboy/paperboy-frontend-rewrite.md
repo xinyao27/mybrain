@@ -10,7 +10,7 @@
 > - [Communication Protocol Redesign (oRPC)](./communication-protocol.md) — Detailed design for replacing Protobuf/PostBox with oRPC
 > - [Observability System Design](./observability-system-design.md) — Building the Paperboy observability system (ohbug + kly + OS context)
 > - [Phase 1: End-to-End Verification](./phase1-e2e-verification.md) — Swift → Santi → WebView → React → oRPC pipeline validation
-> - [Phase 2: Core UI Rebuild](./phase2-core-ui-rebuild.md) — Chat, Sidebar, Settings, Workspace rebuild details
+> - [Phase 2: Core UI Rebuild & Migration](./phase2-core-ui-rebuild.md) — plan plus SwiftUI→React checklist (English)
 > - [Phase 3: Switch + Cleanup + Observability](./phase3-switch-and-observability.md) — SwiftUI removal, Protobuf cleanup, ohbug+kly integration
 
 ## 1. Background & Motivation
@@ -976,7 +976,7 @@ dist/
 
 #### Phase 2: Core UI Rebuild
 
-> **Detailed document:** [Phase 2: Core UI Rebuild](./phase2-core-ui-rebuild.md) — Spaces→Project redesign, Chat/Sidebar/Settings/Workspace detailed breakdown, Santi proto-to-oRPC migration table, acceptance checklist, and risk analysis.
+> **Detailed document:** [Phase 2: Core UI Rebuild & Migration](./phase2-core-ui-rebuild.md) — Spaces→Project redesign, Chat/Sidebar/Settings/Workspace breakdown, Santi proto-to-oRPC migration table, acceptance checklist, line-by-line migration checklist, and risk analysis (English).
 
 **Rebuild all visual modules in parallel** (there is no question of "which to migrate first" — rebuild everything, ship together):
 

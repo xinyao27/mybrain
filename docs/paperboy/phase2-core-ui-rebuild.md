@@ -1,13 +1,19 @@
-# Phase 2: Core UI Rebuild
+# Phase 2: Core UI Rebuild & SwiftUI → React Migration
 
-> Created: 2026-03-28
-> Author: Xinyao Chen
-> Status: Draft
+> Created: 2026-03-28 (plan) · 2026-03-29 (checklist) · Author: Xinyao Chen · Status: Draft  
 > Prerequisites: [Phase 1 End-to-End Verification](./phase1-e2e-verification_zh-CN.md) completed
-> Related Documents:
->
-> - [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
-> - [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
+
+**Related documents:**
+
+- [Paperboy Frontend Rewrite Plan](./paperboy-frontend-rewrite_zh-CN.md)
+- [Communication Protocol Redesign](./communication-protocol_zh-CN.md)
+- Chinese version: [Phase 2：核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md)
+
+This document combines the Phase 2 **product/execution plan** and the **SwiftUI → React migration checklist** in English. For the checklist-only anchor, see [Migration checklist](#part-ii-migration-checklist).
+
+---
+
+## Part I — Core UI Rebuild
 
 ## 1. Objectives
 
@@ -367,3 +373,199 @@ Must be satisfied at the end of Phase 2:
 **Risk:** The new architecture uses MemoryPublisher broadcasts instead of in-process singleton ChatStore. Rapidly opening/closing windows or simultaneous multi-window operations may cause brief inconsistencies; messages may be lost during WS disconnect/reconnect.
 
 **Mitigation:** Use lastEventId for disconnect recovery, with Publisher configured at `resumeRetentionSeconds: 300` (5-minute buffer). Critical operations (session create/delete) use optimistic updates + server-side confirmation.
+
+---
+
+<a id="part-ii-migration-checklist"></a>
+
+## Part II — SwiftUI → React Migration Checklist
+
+> **Note:** Execution-level supplement: every SwiftUI surface, data flow, and interaction to reimplement in React / WebView.
+
+**Source code:** The Paperboy macOS app is not in this repo. SwiftUI lives under the Paperboy monorepo at `packages/paperboy/Paperboy/` (local clone often `~/work/paperboy`).
+
+## Mapping to workstreams
+
+| Workstream       | Section                      |
+| ---------------- | ---------------------------- |
+| Sidebar          | §2 Sidebar                   |
+| Message list     | §3 Chat message list         |
+| Scroll behavior  | §3.5–3.6 (scroll + prefetch) |
+| Input            | §4 Chat input                |
+| Tool call UI     | §5 Tool call UI              |
+| Other components | §6–10                        |
+| Design tokens    | §12 Design system            |
+| PostBox bridge   | §14 Native bridge            |
+| Settings         | §11 Settings                 |
+
+---
+
+## 1. Layout hierarchy
+
+### 1.1 Current SwiftUI tree
+
+Entry: `packages/paperboy/Paperboy/Views/Chat/ChatContentRootView.swift`
+
+```
+ChatWindowRootView
+  └─ ChatContentRootView
+       ├─ HStack: SidebarLayer (ChatSidebarRootView) | ChatConversationPaneView
+       │     (toolbar, body: empty|loading|MessageListView, AskUser, Queue, Input)
+       ├─ Drop overlay
+       └─ AttachmentPreviewPopover
+```
+
+### 1.2 React
+
+Flex row; sidebar width from design tokens; animate collapse like `ChatWindowLayoutModel` (CSS transition).
+
+---
+
+## 2. Sidebar
+
+File: `ChatSidebarHost.swift`
+
+- **Model:** sessions, active id, pagination flags, search, sections, rename state.
+- **Data:** Injected via `setSessions`; React uses oRPC `session.list` + TanStack Query / infinite query.
+- **Time buckets:** Today … Older; placeholder row when no active session and not searching.
+- **Search:** Client filter + `sanitizeSystemContextPrefix`.
+- **Row UX:** Select, context menu, hover affordances, inline rename, load-more sentinel.
+- **Chrome:** Native sidebar blur → `backdrop-filter` or flat fill.
+- **Footer:** Settings → PostBox or in-app route.
+
+---
+
+## 3. Chat message list
+
+Files: `MessageListView.swift`, `ChatMessageListState.swift`, `MessageListHost.swift`
+
+### 3.1 Rows
+
+`ChatRowModel` + `ChatRowKind` (date separator, user text, assistant markdown, image, lazy blob image, document, attachments, tool group, subagent card, streaming/compacting status, compacted marker; skip toolUse/toolResult visually).
+
+### 3.2 Spacing
+
+`ChatTranscriptSpacingPolicy` → CSS margins / per-row top padding map.
+
+### 3.3 Performance
+
+SwiftUI avoids `LazyVStack` (AppKit hosting loop); uses full `VStack`, fixed width, incremental padding, code block VM reuse. React: **virtua** for virtualization.
+
+### 3.5 Scroll to bottom
+
+State: `isNearBottom`, `followStreamingOutput`, `sessionOpenAutoFollow`, `nearTopPrefetchArmed`. Coordinator: `pendingScroll`, 20px bottom tolerance, 240px top prefetch.
+
+Rules: follow new content when pinned; streaming respects `followStreamingOutput`; user scroll up calls `userDidScrollAway`; return to bottom re-enables follow; session open auto-follow; history prepend preserves viewport; status rows use `shouldAutoScrollForLatestChange`.
+
+Detection: `onScrollGeometryChange` or bottom sentinel. React: virtua scroll metrics or `IntersectionObserver` + Zustand.
+
+### 3.6 History prefetch
+
+Top sentinel, arm/rearm thresholds; pure prepend detection keeps scroll position.
+
+### 3.7 Markdown / code
+
+Assistant render package, width class, caching; code blocks and diffs → streamdown + Shiki + diff component.
+
+---
+
+## 4. Chat input
+
+Files: `ChatInputRootView.swift`, `ChatInputModel.swift`
+
+- Auto-growing editor (max lines, manual drag height cap).
+- Shortcuts: Return send, Shift+Return newline, Escape, paste files/images.
+- Primary button state machine (queue edit, record, transcribe, stop, send, mic).
+- Attachments: picker types, limits, strip, drag/drop; upload via oRPC.
+- Voice: PTT states; bridge via PostBox or Web Audio.
+- Queue UI: collapsible list, edit/send now/delete, max height scroll.
+
+---
+
+## 5. Tool call UI
+
+Files: `ToolCallGroupView.swift`, `ToolCallExpandedContent.swift`
+
+Single vs multi-step groups, auto-expand for approvals / running Thinking, accordion per step. Titles from `ToolCallTitlePresentation`. Expanded bodies per tool (diff, bash, web fetch, glob/grep, skills, thinking, MCP JSON, lazy full result). Three approval patterns: permission, structured card, JSON editor.
+
+---
+
+## 6. Subagent card
+
+`SubagentCardView.swift` — timeline vs CUA screenshot card; live `applySubagentProgress`.
+
+---
+
+## 7. Toolbar
+
+`ChatPanelToolbarView` — drag region, icon, sidebar/new/collapse, min width 140–160px; optional macOS 26 glass control can be skipped on web.
+
+---
+
+## 8. Empty state
+
+Centered greeting; tap focuses input.
+
+---
+
+## 9. Ask user card
+
+Between transcript and composer; completion/dismiss callbacks.
+
+---
+
+## 10. Attachment preview modal
+
+Dimmed scrim, responsive panel, prev/next.
+
+---
+
+## 11. Settings
+
+`SettingsView.swift` — tabs (Account … MCP); 600×500; React forms in Phase 2C.
+
+---
+
+## 12. Design system tokens
+
+Map `PBColors`, `PBTypography`, `PBSpacing`, `PBRadius`, shimmer to CSS variables / Tailwind. Approximate materials and window chrome with web APIs.
+
+---
+
+## 13. State mapping
+
+Observable objects / `@Observable` → Zustand, TanStack Query, refs for imperative scroll, Context for globals, localStorage for preferences.
+
+---
+
+## 14. Native bridge (PostBox)
+
+Window ops, file picker, pasteboard, settings, notifications, permissions, theme/OAuth/drop events, keyboard routing — align with [communication protocol](./communication-protocol_zh-CN.md).
+
+---
+
+## 15. Out of scope (stay Swift)
+
+Orb, login, subscription, onboarding, menu bar, app scenes, `ChatWindow` shell, debug-only views.
+
+---
+
+## 16. Suggested order
+
+2A-1 list rows + spacing + streamdown + virtua → 2A-2 scroll → 2A-3 input → 2A-4 tools → 2A-5 misc → 2B sidebar/projects → 2C settings → 2D workspace.
+
+---
+
+## Execution tracking (tick in Paperboy React PRs)
+
+- [ ] Sidebar: buckets, search, rows, rename, load more, context menu
+- [ ] Message list: all row kinds, spacing, virtua
+- [ ] Scroll: near-bottom, auto-scroll, user cancel follow, prefetch, session open
+- [ ] Input: auto-resize, shortcuts, button FSM, attachments, voice
+- [ ] Tool UI: accordion, expanders, approvals
+- [ ] Misc: SubagentCard, queue, ask-user, attachment preview, empty/loading
+- [ ] Design tokens: PB\* → CSS
+- [ ] PostBox: window, picker, pasteboard, events
+- [ ] Settings: eight tabs
+
+---

@@ -10,7 +10,7 @@
 > - [通信协议重新设计（oRPC）](./communication-protocol_zh-CN.md) — 用 oRPC 替换 Protobuf/PostBox 的详细设计
 > - [可观测性系统设计](./observability-system-design_zh-CN.md) — 搭建 Paperboy 可观测性系统（ohbug + kly + OS 上下文）
 > - [Phase 1：端到端验证](./phase1-e2e-verification_zh-CN.md) — Swift → Santi → WebView → React → oRPC 全链路验证
-> - [Phase 2：核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) — Chat、Sidebar、Settings、Workspace 重建细节
+> - [Phase 2：核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md) — Chat、Sidebar、Settings、Workspace 与 SwiftUI→React 清单（简体中文）
 > - [Phase 3：切换 + 清理 + 可观测性](./phase3-switch-and-observability_zh-CN.md) — SwiftUI 删除、Protobuf 清理、ohbug+kly 集成
 
 ## 一、背景与动机
@@ -957,7 +957,7 @@ dist/
 
 #### Phase 2: 核心 UI 重建
 
-> **详细文档：** [Phase 2：核心 UI 重建](./phase2-core-ui-rebuild_zh-CN.md) — Spaces→Project 重新设计、Chat/Sidebar/Settings/Workspace 详细拆解、Santi proto 到 oRPC 迁移表、验收清单、以及风险分析。
+> **详细文档：** [Phase 2：核心 UI 重建与迁移清单](./phase2-core-ui-rebuild_zh-CN.md) — Spaces→Project 重新设计、Chat/Sidebar/Settings/Workspace 详细拆解、Santi proto 到 oRPC 迁移表、验收清单、逐项迁移清单与风险分析（简体中文）。
 
 **并行重建所有可视化模块**（不存在"先迁哪个"的问题——全部重建，一起上线）：
 
