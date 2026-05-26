@@ -43,6 +43,16 @@ git diff --cached --stat
 4. Ask the other CLI to review only. Require findings first, with severity and file/line references where possible.
 5. Relay the useful findings back to the user. Make it clear they came from the external reviewer, and add your own judgment if you disagree.
 
+## Retry Budget
+
+External CLI reviews are best-effort, not an infinite loop. Use at most:
+
+1. One normal tool-enabled review.
+2. One no-tools pasted-context fallback.
+3. One ultra-short no-tools fallback if the second attempt failed because the prompt was too large.
+
+If all attempts fail, stop calling the external CLI, report the exact failure mode, and continue with your own review. Do not keep shrinking prompts indefinitely.
+
 ## Prompt Template
 
 Use a prompt like this, adapted to the target:
@@ -98,13 +108,46 @@ Observed sharp edges:
 - `claude -p --permission-mode plan --tools "Read,Bash" ... --max-turns 6` can hit `Error: Reached max turns` before producing a review, especially when the working tree has many changed files or the prompt asks Claude to inspect broad repo context. Retrying with `--max-turns 12` may still fail.
 - `git diff` and `git diff --stat` do not include untracked files. If the work under review includes new files, collect `git ls-files --others --exclude-standard` and either let Claude read those files with `Read,Bash` or paste their contents into the prompt.
 - `claude -p --tools ""` is useful as a fallback when tool-enabled review keeps hitting max-turn limits, but then Claude cannot inspect the filesystem. The prompt must include the relevant diff, untracked file contents, validation output, and any important constraints.
-- `--max-turns 1` can be too low even for no-tool reviews. Use at least `--max-turns 2` for short pasted-context reviews.
+- No-tools fallback can still fail with `Error: Reached max turns`, even with `--max-turns 2`, if the pasted context is broad. Treat this as a failed external review attempt, not as a finding.
+- `claude -p` can hang without producing output. Use a bounded invocation for fallback attempts, and kill the process if it exceeds the time budget.
+- macOS usually does not provide GNU `timeout`; do not rely on `timeout` unless `command -v timeout` succeeds.
+- `--max-turns 1` can be too low even for no-tool reviews. Use at least `--max-turns 2` for short pasted-context reviews, but do not exceed the retry budget above.
 - Avoid `claude --bare` for this workflow; it may enter an interactive or login-specific path. Prefer non-interactive `claude -p`.
+
+Mac-safe bounded wrapper for Claude commands:
+
+```bash
+run_bounded_claude() {
+  out_file="$(mktemp "${TMPDIR:-/tmp}/claude-review.XXXXXX")"
+  "$@" >"$out_file" 2>&1 &
+  pid="$!"
+  waited=0
+  limit="${CLAUDE_REVIEW_TIMEOUT_SECONDS:-90}"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cat "$out_file"
+      rm -f "$out_file"
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  wait "$pid"
+  exit_code="$?"
+  cat "$out_file"
+  rm -f "$out_file"
+  return "$exit_code"
+}
+```
 
 Fallback pattern when tool-enabled review cannot finish:
 
 ```bash
-claude -p \
+run_bounded_claude claude -p \
   --tools "" \
   --max-turns 2 \
   --output-format text \
@@ -133,6 +176,14 @@ PROMPT
 ```
 
 When using the fallback, keep the pasted context targeted. Prefer the files that contain the logic under review over generated files or broad repo-wide diffs. If Claude reports that it cannot assess untracked files, rerun with those file contents explicitly included.
+
+If a Claude attempt times out, hangs, or hits max turns:
+
+```bash
+ps -axo pid,ppid,stat,command | rg 'claude -p|claude'
+```
+
+Kill only the stale Claude review process you started. Then report that the external review did not complete and include any partial output. Do not present your own review as Claude's review.
 
 ## Calling Codex From Claude
 
