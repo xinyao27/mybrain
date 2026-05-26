@@ -30,7 +30,7 @@ Sources for CLI flags:
    - From Codex, call `claude`.
    - From Claude, call `codex exec`.
 2. Confirm the target from the user request. If absent, review the current working tree.
-3. Collect lightweight context before invoking the other CLI:
+3. Collect lightweight context:
 
 ```bash
 pwd
@@ -38,18 +38,20 @@ git branch --show-current
 git status --short
 git diff --stat
 git diff --cached --stat
+git ls-files --others --exclude-standard
 ```
 
-4. Ask the other CLI to review only. Require findings first, with severity and file/line references where possible.
-5. Relay the useful findings back to the user. Make it clear they came from the external reviewer, and add your own judgment if you disagree.
+4. For Claude reviews, prefer a supplied review packet over broad tool-enabled repository exploration. Claude Code can hit `max turns` before producing findings when asked to inspect a large working tree.
+5. Ask the other CLI to review only. Require findings first, with severity and file/line references where possible.
+6. Relay the useful findings back to the user. Make it clear they came from the external reviewer, and add your own judgment if you disagree.
 
 ## Retry Budget
 
 External CLI reviews are best-effort, not an infinite loop. Use at most:
 
-1. One normal tool-enabled review.
-2. One no-tools pasted-context fallback.
-3. One ultra-short no-tools fallback if the second attempt failed because the prompt was too large.
+1. One packet-first Claude review, or one normal tool-enabled review for a small, explicitly scoped target.
+2. One narrowed packet retry if the first packet was too broad or hit `max turns`.
+3. One tiny health check only if the CLI behavior itself is unclear.
 
 If all attempts fail, stop calling the external CLI, report the exact failure mode, and continue with your own review. Do not keep shrinking prompts indefinitely.
 
@@ -79,16 +81,78 @@ Preflight:
 ```bash
 command -v claude
 claude auth status --text
+claude -p --max-turns 1 --output-format text 'Reply with exactly: ok'
 ```
 
-Default command:
+### Default: packet-first review
+
+Use this default for broad working-tree reviews, multi-file changes, untracked files, or when previous tool-enabled reviews hit `max turns`.
+
+Build a focused review packet before invoking Claude:
+
+```bash
+review_packet="$(mktemp "${TMPDIR:-/tmp}/claude-review-packet.XXXXXX")"
+{
+  echo "You are the external reviewer. Review only; do not modify files."
+  echo
+  echo "Review the supplied context only. Do not inspect the filesystem."
+  echo "Prioritize correctness bugs, regressions, security/privacy risks, missing high-value tests, and maintainability risks that could cause real failures."
+  echo "Output findings first, ordered by severity. Include file/line when possible. If there are no blocking issues, say so clearly and list residual risks."
+  echo
+  echo "--- repo ---"
+  pwd
+  git branch --show-current
+  echo
+  echo "--- git status --short ---"
+  git status --short
+  echo
+  echo "--- diff stat ---"
+  git diff --stat
+  git diff --cached --stat
+  echo
+  echo "--- untracked files ---"
+  git ls-files --others --exclude-standard
+  echo
+  echo "--- targeted diff ---"
+  # Replace these paths with the narrow files or directories under review.
+  git diff -- path/to/changed-file path/to/changed-dir
+  echo
+  echo "--- relevant untracked file contents ---"
+  # Add only new files that matter for the review, for example:
+  # sed -n '1,220p' path/to/new-file
+  echo
+  echo "--- validation ---"
+  # Paste the exact validation commands and pass/fail summaries.
+} >"$review_packet"
+```
+
+Then call Claude with one turn:
+
+```bash
+claude -p \
+  --permission-mode plan \
+  --max-turns 1 \
+  --output-format text \
+  "$(cat "$review_packet")"
+```
+
+Notes:
+
+- Keep the packet targeted. Prefer changed implementation files, tests, promises/specs, and validation summaries. Avoid generated files, lockfiles, and broad full-repo diffs unless they are central to the review.
+- Include untracked files explicitly. `git diff` and `git diff --stat` do not include them.
+- Do not use `--tools ""` as the default no-tools fallback; it can exit with no output on some Claude Code installs. A packet-first `--max-turns 1` call without `--tools ""` is usually more stable.
+- If Claude reports it cannot assess a missing file, add only that file's relevant content to the packet and retry once.
+
+### Optional: tool-enabled narrow review
+
+Use this only when the target is small and Claude should inspect files itself, such as one crate, one package, or one design document. Do not use this for a large mixed working tree.
 
 ```bash
 claude -p \
   --permission-mode plan \
   --tools "Read,Bash" \
   --disallowedTools "Edit" "Write" "MultiEdit" "NotebookEdit" \
-  --max-turns 6 \
+  --max-turns 12 \
   --output-format text \
   "<review prompt>"
 ```
@@ -98,6 +162,7 @@ Notes:
 - Use `cd <repo>` before invoking Claude when reviewing a specific local repository.
 - Keep `--permission-mode plan` for review-only work.
 - Keep `--tools "Read,Bash"` so Claude can inspect files and git state but does not receive editing tools.
+- Scope the prompt tightly, for example: "Review only `crates/harness-daemon/src/main.rs` and its daemon tests."
 - Keep the prompt explicit: "Review only; do not modify files."
 - Do not use `claude ultrareview` even if the user asks for a deep or strict review. Ask for confirmation before any paid premium feature, and prefer plain `claude -p`.
 
@@ -107,11 +172,11 @@ Observed sharp edges:
 
 - `claude -p --permission-mode plan --tools "Read,Bash" ... --max-turns 6` can hit `Error: Reached max turns` before producing a review, especially when the working tree has many changed files or the prompt asks Claude to inspect broad repo context. Retrying with `--max-turns 12` may still fail.
 - `git diff` and `git diff --stat` do not include untracked files. If the work under review includes new files, collect `git ls-files --others --exclude-standard` and either let Claude read those files with `Read,Bash` or paste their contents into the prompt.
-- `claude -p --tools ""` is useful as a fallback when tool-enabled review keeps hitting max-turn limits, but then Claude cannot inspect the filesystem. The prompt must include the relevant diff, untracked file contents, validation output, and any important constraints.
-- No-tools fallback can still fail with `Error: Reached max turns`, even with `--max-turns 2`, if the pasted context is broad. Treat this as a failed external review attempt, not as a finding.
+- `claude -p --tools ""` can exit with no output on some installs. Do not rely on it as the stable fallback unless a local health check proves it works.
+- Packet-first review can still fail with `Error: Reached max turns` if the packet is too broad. Treat this as a failed external review attempt, narrow the packet once, and do not present your own review as Claude's review.
 - `claude -p` can hang without producing output. Use a bounded invocation for fallback attempts, and kill the process if it exceeds the time budget.
 - macOS usually does not provide GNU `timeout`; do not rely on `timeout` unless `command -v timeout` succeeds.
-- `--max-turns 1` can be too low even for no-tool reviews. Use at least `--max-turns 2` for short pasted-context reviews, but do not exceed the retry budget above.
+- `--max-turns 1` is usually enough only when the prompt forbids filesystem inspection and supplies a concise packet. If it fails, narrow the packet rather than repeatedly increasing turns.
 - Avoid `claude --bare` for this workflow; it may enter an interactive or login-specific path. Prefer non-interactive `claude -p`.
 
 Mac-safe bounded wrapper for Claude commands:
@@ -148,13 +213,13 @@ Fallback pattern when tool-enabled review cannot finish:
 
 ```bash
 run_bounded_claude claude -p \
-  --tools "" \
-  --max-turns 2 \
+  --permission-mode plan \
+  --max-turns 1 \
   --output-format text \
   "$(cat <<'PROMPT'
 You are the external reviewer. Review only; do not modify files.
 
-Target: supplied context from <repo>, branch <branch>. Review the supplied context only.
+Target: supplied context from <repo>, branch <branch>. Review the supplied context only. Do not inspect the filesystem.
 
 Prioritize real correctness bugs, regressions, security/privacy risks, missing high-value tests,
 and maintainability risks that could cause real failures. Output findings first. If there are no
