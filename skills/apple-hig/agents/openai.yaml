@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apple Human Interface Guidelines"
+  short_description: "Design native apps with bundled Apple HIG knowledge"
+  default_prompt: "Use $apple-hig to review this interface using the bundled Apple design guidance and recommend concrete improvements."
