@@ -50,6 +50,8 @@ description: "使用本地沉淀的 Human Interface Guidelines 知识设计、�
 
 仅在这些情况或用户明确要求更新 skill 时，使用[来源查询与维护](references/apple-resources_zh-CN.md)。设计判断优先参考当前 HIG，API 行为参考框架文档或已安装的 SDK。核实日期较早，本身并不意味着每项稳定的设计判断都需要重新联网查询。
 
+对于 Apple HIG 和 API 文章网址，按来源查询参考中的命令运行附带的[读取器](scripts/read-apple-docs.mjs)，然后阅读保存的 Markdown。脚本路径相对于本 `SKILL.md` 所在目录解析，不是项目目录。读取器需要 Node.js 22.20+ 和网络，本地知识只需要文件读取能力。
+
 查询失败时，继续完成本地知识能够支持的决策，并指出尚未确认的具体结论。可以引用本地记录的来源网址，但不要声称刚刚完成了在线核实。日常使用不代表要重写 skill。
 
 ## 用证据收尾

@@ -8,18 +8,38 @@ Start with the source recorded beside the relevant local guidance. For an uncove
 
 Read the section that answers the question. Prefer current HIG over an older WWDC example when their recommendations differ, and distinguish a design recommendation from an API constraint. Identify beta or platform-specific material before applying it to the deployment target.
 
-## Reading pages that require JavaScript
+## Read official pages into Markdown
 
-An HTML response saying “This page requires JavaScript” is not the article. Follow an Apple-provided Markdown link when present. If that is unavailable, Apple's documentation site also serves DocC JSON for many pages. These examples were verified:
+Use the bundled [reader](../scripts/read-apple-docs.mjs) for HIG pages and `/documentation/` articles or API symbols. It fetches the page's public DocC data and writes ordinary Markdown. Run it with Node.js 22.20+ from any directory, resolving the script path from the installed skill:
+
+```bash
+node "<skill-directory>/scripts/read-apple-docs.mjs" \
+  "https://developer.apple.com/design/human-interface-guidelines/materials" \
+  --output "<temporary-directory>/apple-hig/materials.md"
+```
+
+Replace the two directory placeholders with actual paths. Read the saved file with the agent's normal file-reading tool and check the title against the intended topic. The command prints the saved path to stderr; omitting `--output` prints Markdown to stdout. It creates parent directories and refuses to overwrite existing files. To refresh, use a new filename; an existing copy is a dated snapshot, not proof of current guidance.
+
+The same command accepts an API URL such as `https://developer.apple.com/documentation/swiftui/view/glasseffect(_:in:)`. Public page, `.md`, and DocC `.json` URLs are accepted. Section anchors and query strings are removed: the reader retrieves the whole page in its default language variant. It does not select translated or Objective-C variants from query parameters.
+
+The output includes the title, source URL, retrieval time, article body, tables, lists, framework tabs, code, API availability, related topics, image descriptions and links, and Apple's copyright notice. Inline `doc://` identifiers are resolved into named HTTPS links. Media paths are resolved under Apple's `/tutorials/` asset root. The reader does not download images or videos; inspect those separately when the decision depends on appearance. A text extraction is not visual verification.
+
+### Failure behavior and alternatives
+
+An HTML response saying “This page requires JavaScript” is not the article. Apple's own Markdown can also contain unresolved `doc://` references. The reader uses DocC for both HIG and API pages to handle these consistently; no browser rendering, API key, MCP server, or npm package is needed.
+
+HTTP errors, HTML shells, mismatched document identifiers, unresolved references, and unsupported body structures produce a nonzero exit and an explicit error. Conversion finishes before opening an output file, so retrieval or format failures do not leave a misleading partial article. The DocC endpoint is an implementation detail of Apple's site and may change.
+
+If Node or command execution is unavailable, continue with the bundled references or ask an available read-only HTTP tool to fetch the corresponding DocC JSON. These are verified examples:
 
 | Public page                                                                           | DocC data                                                                                                 |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `https://developer.apple.com/design/human-interface-guidelines/materials`             | `https://developer.apple.com/tutorials/data/design/human-interface-guidelines/materials.json`             |
 | `https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass` | `https://developer.apple.com/tutorials/data/documentation/technologyoverviews/adopting-liquid-glass.json` |
 
-Fetch with an available read-only HTTP tool. Confirm the response is JSON and `metadata.title` matches the intended article. Read `abstract`, `primaryContentSections`, and any relevant `topicSections`. Resolve inline reference identifiers through `references` to retain API names, link titles, and image descriptions. Inspect images when the decision depends on an example's appearance; prose alone does not verify its layout.
+When reading JSON directly, check `metadata.title`, read `abstract`, `primaryContentSections`, and relevant `topicSections`, and resolve inline identifiers through `references`. Preserve framework tabs, tables, code, captions, and availability conditions. If retrieval or conversion fails, use an accessible official page or permitted browser and identify the specific unresolved claim. Apple Design landing pages, resource downloads, and WWDC videos use their own pages; they are outside this reader's scope.
 
-The data URL pattern is a fallback to try, not a stable public API contract. If unavailable, use an accessible official page or a permitted browser. Cite the human-readable Apple URL in the answer, and distinguish search excerpts from a complete article. A failed lookup limits the unresolved claim, not decisions already supported by local guidance.
+Keep generated Apple documents in a temporary or ignored directory for the task, separate from the independently authored MIT skill. Preserve source and copyright notices. Cite the human-readable Apple URL in answers and distinguish local snapshots, live retrieval, and search excerpts.
 
 ## Design assets and tools
 

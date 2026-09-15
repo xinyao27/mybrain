@@ -50,6 +50,8 @@ Consult the specific official source when:
 
 Use [Source lookup and maintenance](references/apple-resources.md) only for these cases or an explicit skill refresh. Prefer current HIG for design and framework documentation or the installed SDK for API behavior. An older verification date alone does not turn every stable design decision into a lookup task.
 
+For Apple HIG and API article URLs, run the bundled [reader](scripts/read-apple-docs.mjs) using the command in the source lookup reference, then read its saved Markdown. Resolve the script relative to this `SKILL.md`, not the project directory. It needs Node.js 22.20+ and network access; the bundled knowledge needs only file access.
+
 If lookup fails, continue decisions supported by local knowledge and identify the particular unresolved claim. Source URLs can be cited from the local notes without claiming a fresh online verification. Ordinary use does not imply rewriting the skill.
 
 ## Finish with evidence
